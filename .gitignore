@@ -1,0 +1,7 @@
+FLORE_bin
+main.o
+overlap.o
+read.o
+util.o
+*.json
+*.xlsx

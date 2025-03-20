@@ -20,7 +20,7 @@ vector<string> read_fasta(const string &filename) {
                 reads.push_back(current_seq);
                 current_seq.clear();
             }
-            // Ignora la riga di header
+            // Ignora l'header
         } else {
             current_seq += line;
         }

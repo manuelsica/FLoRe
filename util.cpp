@@ -1,6 +1,16 @@
-// util.cpp
 #include "util.hpp"
 #include <cmath>
+#include <vector>
+
+// Funzione helper locale per calcolare il prefix hash su un vettore di long long.
+static vector<long long> compute_prefix_hash(const vector<long long>& arr, long long base, long long mod) {
+    int n = arr.size();
+    vector<long long> prefix(n+1, 0);
+    for (int i = 0; i < n; i++) {
+        prefix[i+1] = (prefix[i] * base + (arr[i] % mod)) % mod;
+    }
+    return prefix;
+}
 
 long long compute_val(const string &factor, int base) {
     int L = factor.size();
@@ -85,5 +95,8 @@ ProcessedRead process_read(const string &read, int k) {
         pr.fingerprint[i] = encode_factor(pr.kmers[i], 8, 5);
     }
     pr.comp = compress_fingerprint(pr.fingerprint, pr.kmers);
+    long long mod1 = 1000000007LL, mod2 = 1000000009LL, base = 131LL;
+    pr.comp_prefix_mod1 = compute_prefix_hash(pr.comp.comp_fp, base, mod1);
+    pr.comp_prefix_mod2 = compute_prefix_hash(pr.comp.comp_fp, base, mod2);
     return pr;
 }

@@ -22,21 +22,21 @@ long long encode_factor(const string &factor, int shift = 8, int base = 5);
 
 /*
  * sliding_window_read:
- * Segmenta una read in k‑mer utilizzando una finestra scorrevole (step=1)
+ * Segmenta una read in k‑mer utilizzando una finestra scorrevole (step = 1)
  */
 vector<string> sliding_window_read(const string &read, int k, int step = 1);
 
 /*
  * reverse_complement:
- * Restituisce il reverse complement di una sequenza nucleotidica
+ * Restituisce il reverse complement di una sequenza nucleotidica.
  */
 string reverse_complement(const string &seq);
 
 /*
  * Struttura per memorizzare la fingerprint compressa:
- * - comp_fp: vettore dei codici compressi (fingerprint)
- * - comp_kmers: i k‑mer corrispondenti (non ridondanti)
- * - comp_indices: gli indici originali dei k‑mer nella read completa
+ * - comp_fp: vettore dei codici compressi.
+ * - comp_kmers: i k‑mer corrispondenti (non ridondanti).
+ * - comp_indices: gli indici originali dei k‑mer nella read completa.
  */
 struct CompressedFingerprint {
     vector<long long> comp_fp;
@@ -52,19 +52,23 @@ CompressedFingerprint compress_fingerprint(const vector<long long> &fingerprint,
 
 /*
  * Struttura per il risultato dell’elaborazione di una read:
- * - comp: fingerprint compressa (codici, kmers, indici)
- * - kmers: lista completa dei k‑mer
- * - fingerprint: vettore completo di codici (non compresso)
+ * - comp: fingerprint compressa (codici, kmers, comp_indices).
+ * - kmers: lista completa dei k‑mer.
+ * - fingerprint: vettore completo di codici (non compresso).
+ * - comp_prefix_mod1, comp_prefix_mod2: prefix hash precomputati sulla fingerprint compressa.
  */
 struct ProcessedRead {
     CompressedFingerprint comp;
     vector<string> kmers;
     vector<long long> fingerprint;
+    vector<long long> comp_prefix_mod1;
+    vector<long long> comp_prefix_mod2;
 };
 
 /*
  * process_read:
- * Data una read e il valore di k, segmenta in k‑mer, codifica ogni k‑mer e comprime la fingerprint.
+ * Data una read e il valore di k, segmenta in k‑mer, codifica ogni k‑mer,
+ * comprime la fingerprint e precompila i prefix hash sulla fingerprint compressa.
  */
 ProcessedRead process_read(const string &read, int k);
 
