@@ -325,7 +325,6 @@ OverlapResult compare_candidate_pair(const ReadData &r1, const ReadData &r2, int
     return bestResult;
 }
 
-// Funzione per stampare l'uso corretto del programma e le opzioni disponibili.
 void print_usage(const char* prog_name) {
     cerr << "Usage: " << prog_name << " -f <file_fasta> [options]" << endl;
     cerr << "Options:" << endl;
@@ -337,15 +336,30 @@ void print_usage(const char* prog_name) {
     cerr << "  -h, --help                     Mostra questo messaggio di aiuto" << endl;
 }
 
+// Struttura per memorizzare i dettagli per la visualizzazione del grafo
+struct GraphEdge {
+    int read1;
+    int read2;
+    string orientation1;
+    string orientation2;
+    int start1;
+    int end1;
+    int start2;
+    int end2;
+    int overlap_length;
+    string fingerprint_read1;
+    string fingerprint_read2;
+    string overlap_region_read1;
+    string overlap_region_read2;
+};
+
 int main(int argc, char* argv[]) {
-    // Variabili per le opzioni da linea di comando.
     string fasta_file;
     int min_overlap = 13;
     int max_repeat_threshold = 10;
     string json_filename = "results.json";
-    unsigned int num_threads = 0;  // Se rimane a 0, verrà impostato in base all'hardware
+    unsigned int num_threads = 0;
 
-    // Definizione delle opzioni lunghe.
     struct option long_options[] = {
         {"fasta", required_argument, 0, 'f'},
         {"min_overlap", required_argument, 0, 'm'},
@@ -357,7 +371,6 @@ int main(int argc, char* argv[]) {
     };
 
     int opt;
-    // Parsing delle opzioni da linea di comando.
     while ((opt = getopt_long(argc, argv, "f:m:r:j:t:h", long_options, NULL)) != -1) {
         switch (opt) {
             case 'f':
@@ -384,24 +397,20 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // Verifica che il file FASTA sia stato specificato.
     if (fasta_file.empty()) {
         cerr << "Errore: il file FASTA deve essere specificato." << endl;
         print_usage(argv[0]);
         return 1;
     }
 
-    // Se num_threads non è stato impostato, usa il valore di hardware_concurrency (con fallback a 2).
     if (num_threads == 0) {
         num_threads = thread::hardware_concurrency();
         if (num_threads == 0)
             num_threads = 2;
     }
 
-    // Inizio cronometro esecuzione.
     auto start_time = steady_clock::now();
 
-    // Stampa di inizio elaborazione: Lettura del file FASTA.
     cout << "Lettura del file FASTA: " << fasta_file << endl;
     vector<string> reads = read_fasta(fasta_file);
     if (reads.empty()) {
@@ -413,7 +422,6 @@ int main(int argc, char* argv[]) {
     int k = 15;
     size_t N = reads.size();
 
-    // Pre-processing delle read: calcolo delle fingerprint e generazione della read reverse.
     cout << "Pre-processing delle read in corso..." << endl;
     vector<ReadData> all_reads(N);
     for (size_t i = 0; i < N; i++) {
@@ -423,7 +431,6 @@ int main(int argc, char* argv[]) {
         all_reads[i].pr_rev = process_read(all_reads[i].reverse, k);
     }
 
-    // Creazione degli unordered_set per le fingerprint (forward e reverse).
     cout << "Costruzione degli unordered_set per ciascuna read..." << endl;
     for (size_t i = 0; i < N; i++) {
         for (auto &val : all_reads[i].pr_fwd.comp.comp_fp)
@@ -432,7 +439,6 @@ int main(int argc, char* argv[]) {
             all_reads[i].set_rev.insert(val);
     }
 
-    // Conversione degli unordered_set in vettori ordinati per un filtering più efficiente.
     cout << "Ordinamento delle fingerprint per migliorare il filtering..." << endl;
     for (size_t i = 0; i < N; i++) {
         all_reads[i].sorted_fwd.assign(all_reads[i].set_fwd.begin(), all_reads[i].set_fwd.end());
@@ -441,16 +447,13 @@ int main(int argc, char* argv[]) {
         sort(all_reads[i].sorted_rev.begin(), all_reads[i].sorted_rev.end());
     }
 
-    // Costruzione degli indici invertiti per ciascun orientamento.
     cout << "Costruzione degli indici invertiti..." << endl;
     unordered_map<long long, vector<int>> index_fwd, index_rev;
     build_inverted_index(all_reads, index_fwd, index_rev);
 
-    // Generazione delle coppie candidate utilizzando gli indici invertiti.
     cout << "Generazione delle coppie candidate..." << endl;
     vector<Pair> candidate_vector = generate_candidate_pairs_vector(index_fwd, index_rev);
 
-    // Pre-filtraggio delle coppie candidate utilizzando l'intersezione dei vettori ordinati.
     cout << "Pre-filtraggio delle coppie candidate..." << endl;
     vector<Pair> filtered_candidates;
     for (const auto &cand : candidate_vector) {
@@ -464,29 +467,25 @@ int main(int argc, char* argv[]) {
     }
     cout << "Numero di coppie candidate filtrate: " << filtered_candidates.size() << endl;
 
-    // Elaborazione delle coppie candidate filtrate in parallelo (multithreading).
-    cout << "Elaborazione delle candidate con multi-threading (" << num_threads << " thread)..." << endl;
     mutex output_mutex;
     mutex json_mutex;
+    mutex graph_mutex; // Per la struttura grafica
     vector<string> json_results;
+    vector<GraphEdge> graph_edges; // Struttura grafica dettagliata degli overlap
 
     size_t total = filtered_candidates.size();
     size_t chunk = total / num_threads;
     if (chunk == 0) chunk = 1;
 
-    // Funzione lambda che rappresenta il lavoro di ogni thread.
     auto worker = [&](size_t start_idx, size_t end_idx) {
         for (size_t idx = start_idx; idx < end_idx && idx < total; idx++) {
             Pair p = filtered_candidates[idx];
             OverlapResult best = compare_candidate_pair(all_reads[p.i], all_reads[p.j], k);
             if (best.overlap_len > 0) {
-                // Estrae le regioni di overlap dalle read originali.
                 string region_r1 = best.r1.substr(best.start1, best.end1 - best.start1);
                 string region_r2 = best.r2.substr(best.start2, best.end2 - best.start2);
-                // Ottiene l'annotazione per l'overlap.
                 string annotation = get_overlap_annotation(region_r1, best.overlap_len, min_overlap, max_repeat_threshold);
                 {
-                    // Blocco di protezione per la scrittura su console.
                     lock_guard<mutex> lock(output_mutex);
                     cout << "Coppia di read " << p.i+1 << " e " << p.j+1 << ":" << endl;
                     cout << "La piu' lunga sottosequenza contigua comune (graph-based su fingerprint) ha lunghezza (in match fingerprint): " 
@@ -507,8 +506,7 @@ int main(int argc, char* argv[]) {
                          << best.start2 << "\t" << best.end2 << "\t" << best.r2.size() << endl;
                     cout << "---------------------------------------" << endl;
                 }
-                // Se non ci sono annotazioni di errore, prepara il risultato in formato JSON.
-                if (annotation.empty()) {
+                {
                     ostringstream oss;
                     oss << "{";
                     oss << "\"read1\": " << p.i+1 << ", ";
@@ -527,15 +525,31 @@ int main(int argc, char* argv[]) {
                     oss << "\"overlap_region_read2\": \"" << region_r2 << "\", ";
                     oss << "\"fingerprint_read2\": \"" << best.fingerprint_r2 << "\"";
                     oss << "}";
-                    // Blocco di protezione per l'accesso al vettore dei risultati JSON.
                     lock_guard<mutex> lock(json_mutex);
                     json_results.push_back(oss.str());
+                }
+                {
+                    GraphEdge edge;
+                    edge.read1 = p.i+1;
+                    edge.read2 = p.j+1;
+                    edge.orientation1 = best.orientation1;
+                    edge.orientation2 = best.orientation2;
+                    edge.start1 = best.start1;
+                    edge.end1 = best.end1;
+                    edge.start2 = best.start2;
+                    edge.end2 = best.end2;
+                    edge.overlap_length = best.overlap_len;
+                    edge.fingerprint_read1 = best.fingerprint_r1;
+                    edge.fingerprint_read2 = best.fingerprint_r2;
+                    edge.overlap_region_read1 = region_r1;
+                    edge.overlap_region_read2 = region_r2;
+                    lock_guard<mutex> lock(graph_mutex);
+                    graph_edges.push_back(edge);
                 }
             }
         }
     };
 
-    // Avvia i thread per l'elaborazione delle candidate.
     size_t start_idx = 0;
     vector<thread> pool;
     while (start_idx < total) {
@@ -543,11 +557,9 @@ int main(int argc, char* argv[]) {
         pool.emplace_back(worker, start_idx, end_idx);
         start_idx = end_idx;
     }
-    // Attende la terminazione di tutti i thread.
     for (auto &t : pool)
         t.join();
 
-    // Salvataggio dei risultati JSON sul file specificato.
     cout << "Salvataggio dei risultati nel file JSON: " << json_filename << endl;
     ofstream json_file(json_filename);
     if (json_file.is_open()) {
@@ -563,7 +575,37 @@ int main(int argc, char* argv[]) {
         cerr << "Errore nell'apertura di " << json_filename << " per la scrittura." << endl;
     }
 
-    // Calcola e stampa il tempo di esecuzione e l'utilizzo massimo di memoria.
+    // Salvataggio della struttura grafica dettagliata in un file JSON
+    string graph_filename = "graph_detailed.json";
+    cout << "Salvataggio della struttura grafica dettagliata nel file: " << graph_filename << endl;
+    ofstream graph_file(graph_filename);
+    if (graph_file.is_open()) {
+        graph_file << "[\n";
+        for (size_t i = 0; i < graph_edges.size(); i++) {
+            graph_file << "{";
+            graph_file << "\"read1\": " << graph_edges[i].read1 << ", ";
+            graph_file << "\"read2\": " << graph_edges[i].read2 << ", ";
+            graph_file << "\"orientation1\": \"" << graph_edges[i].orientation1 << "\", ";
+            graph_file << "\"orientation2\": \"" << graph_edges[i].orientation2 << "\", ";
+            graph_file << "\"start1\": " << graph_edges[i].start1 << ", ";
+            graph_file << "\"end1\": " << graph_edges[i].end1 << ", ";
+            graph_file << "\"start2\": " << graph_edges[i].start2 << ", ";
+            graph_file << "\"end2\": " << graph_edges[i].end2 << ", ";
+            graph_file << "\"overlap_length\": " << graph_edges[i].overlap_length << ", ";
+            graph_file << "\"fingerprint_read1\": \"" << graph_edges[i].fingerprint_read1 << "\", ";
+            graph_file << "\"fingerprint_read2\": \"" << graph_edges[i].fingerprint_read2 << "\", ";
+            graph_file << "\"overlap_region_read1\": \"" << graph_edges[i].overlap_region_read1 << "\", ";
+            graph_file << "\"overlap_region_read2\": \"" << graph_edges[i].overlap_region_read2 << "\"";
+            graph_file << "}";
+            if (i < graph_edges.size() - 1)
+                graph_file << ",\n";
+        }
+        graph_file << "\n]\n";
+        graph_file.close();
+    } else {
+        cerr << "Errore nell'apertura di " << graph_filename << " per la scrittura." << endl;
+    }
+
     auto end_time = steady_clock::now();
     auto duration = duration_cast<milliseconds>(end_time - start_time).count();
     size_t mem_kb = getMemoryUsageKB();
