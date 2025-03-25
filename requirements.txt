@@ -1,4 +1,2 @@
 pandas
 openpyxl
-networkx
-pyvis

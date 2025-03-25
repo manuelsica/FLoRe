@@ -74,23 +74,26 @@ import os
 import subprocess
 
 ################################################################################
-# Installa eventuali moduli mancanti (pandas, openpyxl), se non già presenti
+# 1) Installa eventuali moduli mancanti (pandas, openpyxl), se non già presenti
 ################################################################################
 modules_to_install = []
 try:
     import pandas
 except ImportError:
     modules_to_install.append("pandas")
+
 try:
     import openpyxl
     from openpyxl.styles import Font, PatternFill, Alignment
     from openpyxl.utils import get_column_letter
 except ImportError:
     modules_to_install.append("openpyxl")
+
 if modules_to_install:
     print(f"Installo automaticamente i pacchetti mancanti: {modules_to_install}")
     subprocess.run([sys.executable, "-m", "pip", "install", "--user", "-q"] + modules_to_install, check=True, stderr=subprocess.DEVNULL)
 
+import re
 import json
 import pandas as pd
 import openpyxl
@@ -98,24 +101,29 @@ from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
 
 ################################################################################
-# Determina il nome del file JSON e dell'Excel corrispondente
+# 2) Determina il nome del file JSON e l'Excel corrispondente
 ################################################################################
 json_file = os.environ.get('JSONFILE', 'results.json')
+
 base, ext = os.path.splitext(json_file)
-excel_file = base + ".xlsx" if ext.lower() == ".json" else json_file + ".xlsx"
+if ext.lower() == ".json":
+    excel_file = base + ".xlsx"
+else:
+    excel_file = json_file + ".xlsx"
 
 ################################################################################
-# Verifica l'esistenza del file JSON
+# 3) Verifica l'esistenza del file JSON
 ################################################################################
 if not os.path.exists(json_file):
     print(f"Il file JSON '{json_file}' non esiste, salto la conversione.")
     sys.exit(0)
 
 ################################################################################
-# Carica il JSON e crea l'Excel con estetica migliorata
+# 4) Carica il JSON e crea l'Excel con estetica migliorata
 ################################################################################
 with open(json_file, 'r') as f:
     data = json.load(f)
+
 data.sort(key=lambda x: (x.get("read1", 0), x.get("read2", 0)))
 df = pd.DataFrame(data)
 
@@ -132,7 +140,7 @@ for col in columns:
 df = df[columns]
 
 ################################################################################
-# Salva in Excel con formattazione
+# 5) Salva in Excel con formattazione
 ################################################################################
 with pd.ExcelWriter(excel_file, engine="openpyxl") as writer:
     df.to_excel(writer, index=False, sheet_name="Results")
@@ -167,91 +175,4 @@ print(f"File Excel creato con successo: {excel_file}")
 EOF
 else
   echo "Python non trovato o non disponibile: impossibile creare Excel."
-fi
-
-########################################
-# 5) Se esiste Python, creiamo il grafo HTML interattivo con dettagli provenienti da graph_detailed.json
-########################################
-
-# Utilizziamo graph_detailed.json per il grafo interattivo.
-export GRAPHDATA="graph_detailed.json"
-if [ -n "$PYTHON" ]; then
-  echo "Generazione del grafo HTML interattivo dal file JSON ($GRAPHDATA)..."
-  "$PYTHON" - <<'EOF'
-import sys
-import os
-import json
-import subprocess
-
-################################################################################
-# Installa eventuali moduli mancanti (networkx, pyvis, jinja2) se non già presenti
-################################################################################
-modules_to_install = []
-try:
-    import networkx as nx
-except ImportError:
-    modules_to_install.append("networkx")
-try:
-    from pyvis.network import Network
-except ImportError:
-    modules_to_install.append("pyvis")
-try:
-    import jinja2
-except ImportError:
-    modules_to_install.append("jinja2")
-if modules_to_install:
-    print(f"Installo automaticamente i pacchetti mancanti: {modules_to_install}")
-    subprocess.run([sys.executable, "-m", "pip", "install", "--user", "-q"] + modules_to_install, check=True, stderr=subprocess.DEVNULL)
-
-import networkx as nx
-from pyvis.network import Network
-
-################################################################################
-# Verifica e caricamento del file JSON dettagliato
-################################################################################
-json_file = os.environ.get('GRAPHDATA', 'graph_detailed.json')
-if not os.path.exists(json_file):
-    print(f"Il file JSON '{json_file}' non esiste, salto la generazione del grafo.")
-    sys.exit(0)
-with open(json_file, 'r') as f:
-    data = json.load(f)
-
-################################################################################
-# Costruzione del grafo: ogni record contiene informazioni dettagliate sugli overlap
-################################################################################
-G = nx.Graph()
-for edge in data:
-    r1 = edge.get("read1")
-    r2 = edge.get("read2")
-    overlap = edge.get("overlap_length", 0)
-    detailed_info = (
-        f"Overlap Length: {edge.get('overlap_length', 'N/A')}\n"
-        f"Orientazioni: {edge.get('orientation1', 'N/A')} - {edge.get('orientation2', 'N/A')}\n"
-        f"Read {r1} Range: {edge.get('start1', 'N/A')} - {edge.get('end1', 'N/A')}\n"
-        f"Read {r2} Range: {edge.get('start2', 'N/A')} - {edge.get('end2', 'N/A')}\n"
-        f"Len Read {r1}: {edge.get('len_read1', 'N/A')}\n"
-        f"Len Read {r2}: {edge.get('len_read2', 'N/A')}\n"
-        f"Fingerprint {r1}: {edge.get('fingerprint_read1', 'N/A')}\n"
-        f"Fingerprint {r2}: {edge.get('fingerprint_read2', 'N/A')}\n"
-        f"Overlap Region {r1}: {edge.get('overlap_region_read1', 'N/A')}\n"
-        f"Overlap Region {r2}: {edge.get('overlap_region_read2', 'N/A')}"
-    )
-    if r1 is not None and not G.has_node(r1):
-        G.add_node(r1, label=f"Read {r1}")
-    if r2 is not None and not G.has_node(r2):
-        G.add_node(r2, label=f"Read {r2}")
-    if r1 is not None and r2 is not None:
-        G.add_edge(r1, r2, weight=overlap, title=detailed_info, label=f"Overlap: {overlap}")
-
-################################################################################
-# Creazione della visualizzazione interattiva del grafo tramite pyvis
-################################################################################
-net = Network(height="800px", width="100%", notebook=False)
-net.from_nx(G)
-graph_html = "detailed_graph.html"
-net.show(graph_html, notebook=False)
-print(f"Grafo HTML generato con successo: {graph_html}")
-EOF
-else
-  echo "Python non trovato o non disponibile: impossibile creare il grafo HTML."
 fi
