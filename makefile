@@ -21,7 +21,6 @@ read.o: read.cpp read.hpp
 	$(CXX) $(CXXFLAGS) -c read.cpp
 
 set-exec:
-	# Tenta di dare permessi esecuzione a FLORE su Unix-like
 	chmod +x FLORE 2>/dev/null || true
 
 clean:

@@ -1,42 +1,23 @@
 #include "util.hpp"
-#include <cmath>
 #include <vector>
+#include <string>
+#include <string_view>
+#include <algorithm>
 
-// Funzione helper locale per calcolare il prefix hash su un vettore di long long.
-static vector<long long> compute_prefix_hash(const vector<long long>& arr, long long base, long long mod) {
-    int n = arr.size();
-    vector<long long> prefix(n+1, 0);
-    for (int i = 0; i < n; i++) {
-        prefix[i+1] = (prefix[i] * base + (arr[i] % mod)) % mod;
-    }
-    return prefix;
-}
-
-long long compute_val(const string &factor, int base) {
-    int L = factor.size();
-    long long val = 0;
-    for (int i = 0; i < L; i++) {
-        int m;
-        switch(factor[i]) {
-            case 'A': m = 0; break;
-            case 'C': m = 1; break;
-            case 'G': m = 2; break;
-            case 'T': m = 3; break;
-            default: m = 0; break;
+// Codifica un k‑mer usando 2 bit per base.
+unsigned int encode_kmer_bit(const string &kmer) {
+    unsigned int value = 0;
+    for (char c : kmer) {
+        value <<= 2;
+        switch(c) {
+            case 'A': case 'a': value |= 0; break;
+            case 'C': case 'c': value |= 1; break;
+            case 'G': case 'g': value |= 2; break;
+            case 'T': case 't': value |= 3; break;
+            default: value |= 0; break;
         }
-        long long power = 1;
-        for (int j = 0; j < L - 1 - i; j++) {
-            power *= base;
-        }
-        val += m * power;
     }
-    return val;
-}
-
-long long encode_factor(const string &factor, int shift, int base) {
-    int L = factor.size();
-    long long val = compute_val(factor, base);
-    return (val << shift) | L;
+    return value;
 }
 
 vector<string> sliding_window_read(const string &read, int k, int step) {
@@ -58,13 +39,13 @@ string reverse_complement(const string &seq) {
             case 'C': result.push_back('G'); break;
             case 'G': result.push_back('C'); break;
             case 'T': result.push_back('A'); break;
-            default: result.push_back('N'); break;
+            default:  result.push_back('N'); break;
         }
     }
     return result;
 }
 
-CompressedFingerprint compress_fingerprint(const vector<long long> &fingerprint, const vector<string> &kmers) {
+CompressedFingerprint compress_fingerprint(const vector<unsigned int> &fingerprint, const vector<string_view> &kmers) {
     CompressedFingerprint comp;
     if (fingerprint.empty())
         return comp;
@@ -86,17 +67,38 @@ CompressedFingerprint compress_fingerprint(const vector<long long> &fingerprint,
 
 ProcessedRead process_read(const string &read, int k) {
     ProcessedRead pr;
-    int n = read.size() - k + 1;
-    pr.kmers.reserve(n);
-    pr.fingerprint.reserve(n);
-    pr.kmers = sliding_window_read(read, k, 1);
-    pr.fingerprint.resize(pr.kmers.size());
-    for (size_t i = 0; i < pr.kmers.size(); i++) {
-        pr.fingerprint[i] = encode_factor(pr.kmers[i], 8, 5);
+    int n = read.size();
+    if (n < k)
+        return pr;
+    int numKmers = n - k + 1;
+    pr.fingerprint.resize(numKmers);
+    pr.kmers.reserve(numKmers);
+    
+    // Calcola il primo k‑mer usando la codifica bit‑level.
+    string_view first_kmer(read.data(), k);
+    unsigned int val = encode_kmer_bit(string(first_kmer));
+    pr.fingerprint[0] = val;
+    pr.kmers.push_back(first_kmer);
+    
+    int total_bits = 2 * k;
+    unsigned int mask = (1u << total_bits) - 1;
+    for (int i = 1; i < numKmers; i++) {
+        // Aggiornamento in O(1): shift a sinistra, mascheratura e aggiunta della nuova base.
+        val = (val << 2) & mask;
+        char c = read[i + k - 1];
+        unsigned int bits = 0;
+        switch(c) {
+            case 'A': case 'a': bits = 0; break;
+            case 'C': case 'c': bits = 1; break;
+            case 'G': case 'g': bits = 2; break;
+            case 'T': case 't': bits = 3; break;
+            default: bits = 0; break;
+        }
+        val |= bits;
+        pr.fingerprint[i] = val;
+        pr.kmers.push_back(string_view(read.data() + i, k));
     }
+    
     pr.comp = compress_fingerprint(pr.fingerprint, pr.kmers);
-    long long mod1 = 1000000007LL, mod2 = 1000000009LL, base = 131LL;
-    pr.comp_prefix_mod1 = compute_prefix_hash(pr.comp.comp_fp, base, mod1);
-    pr.comp_prefix_mod2 = compute_prefix_hash(pr.comp.comp_fp, base, mod2);
     return pr;
 }

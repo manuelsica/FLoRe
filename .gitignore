@@ -5,3 +5,5 @@ read.o
 util.o
 *.json
 *.xlsx
+*.html
+*.fa
