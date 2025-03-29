@@ -18,23 +18,7 @@ if command -v python3 >/dev/null 2>&1; then
 elif command -v python >/dev/null 2>&1; then
   PYTHON=python
 else
-  echo "Python non trovato: impossibile installare i pacchetti."
-fi
-
-########################################
-# 1.2) Installazione dei pacchetti da requirements.txt
-########################################
-if [ -n "$PYTHON" ]; then
-  if [ -f "requirements.txt" ]; then
-    echo "Installo i pacchetti Python da requirements.txt..."
-    # Tenta l'installazione con --user in modalità quiet, reindirizzando gli errori per nascondere messaggi indesiderati
-    if ! "$PYTHON" -m pip install --user -q -r requirements.txt 2>/dev/null; then
-      echo "Tentativo di installazione con '--user' fallito. Riprovo con '--break-system-packages'..."
-      "$PYTHON" -m pip install --break-system-packages -q -r requirements.txt 2>/dev/null
-    fi
-  else
-    echo "Il file requirements.txt non esiste, salto l'installazione."
-  fi
+  echo "Python non trovato: impossibile procedere."
 fi
 
 ########################################

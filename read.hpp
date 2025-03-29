@@ -3,13 +3,14 @@
 
 #include <string>
 #include <vector>
-using namespace std;
 
 /*
  * read_fasta:
- * Legge un file FASTA e restituisce un vettore di stringhe, ciascuna contenente la sequenza
- * (concatenando eventuali righe multiple per ogni record).
+ *   Lettura standard di un file FASTA.
+ * read_fasta_buffered:
+ *   Versione “Buffered FASTA Reader (BFR)” per file grandi.
  */
-vector<string> read_fasta(const string &filename);
+std::vector<std::string> read_fasta(const std::string &filename);
+std::vector<std::string> read_fasta_buffered(const std::string &filename);
 
 #endif

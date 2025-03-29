@@ -1,39 +1,20 @@
 #include "read.hpp"
 #include <fstream>
-#include <string>
-#include <vector>
 #include <iostream>
+#include <sstream>
 
-using namespace std;
-
-vector<string> read_fasta(const string &filename) {
-    vector<string> reads;
-    ifstream infile(filename);
+std::vector<std::string> read_fasta(const std::string &filename) {
+    std::vector<std::string> reads;
+    std::ifstream infile(filename);
     if (!infile) {
-        cerr << "Errore nell'apertura del file " << filename << endl;
+        std::cerr << "Errore nell'apertura del file " << filename << std::endl;
         return reads;
     }
-    
-    string line;
-    size_t readCount = 0;
-    // Primo passaggio: contare il numero di reads (righe che iniziano con '>')
-    while (getline(infile, line)) {
-        if (!line.empty() && line[0] == '>')
-            readCount++;
-    }
-    
-    // Riposiziona il file all'inizio
-    infile.clear();
-    infile.seekg(0);
-    
-    // Pre-alloca il vettore in base al conteggio ottenuto
-    reads.reserve(readCount);
-    string current_seq;
-    
-    // Secondo passaggio: lettura delle sequenze
-    while (getline(infile, line)) {
-        if (line.empty())
+    std::string line, current_seq;
+    while (std::getline(infile, line)) {
+        if (line.empty()) {
             continue;
+        }
         if (line[0] == '>') {
             if (!current_seq.empty()) {
                 reads.push_back(current_seq);
@@ -43,8 +24,45 @@ vector<string> read_fasta(const string &filename) {
             current_seq.append(line);
         }
     }
-    if (!current_seq.empty())
+    if (!current_seq.empty()) {
         reads.push_back(current_seq);
-    
+    }
+    return reads;
+}
+
+std::vector<std::string> read_fasta_buffered(const std::string &filename) {
+    std::vector<std::string> reads;
+    std::ifstream infile(filename, std::ios::binary);
+    if (!infile) {
+        std::cerr << "Errore nell'apertura del file " << filename << std::endl;
+        return reads;
+    }
+    // Leggiamo tutto in memoria
+    std::string fileContents((std::istreambuf_iterator<char>(infile)),
+                              std::istreambuf_iterator<char>());
+    size_t pos = 0;
+    std::string current_seq;
+    while (pos < fileContents.size()) {
+        size_t line_end = fileContents.find('\n', pos);
+        if (line_end == std::string::npos) {
+            line_end = fileContents.size();
+        }
+        std::string line = fileContents.substr(pos, line_end - pos);
+        pos = line_end + 1;
+        if (line.empty()) {
+            continue;
+        }
+        if (line[0] == '>') {
+            if (!current_seq.empty()) {
+                reads.push_back(current_seq);
+                current_seq.clear();
+            }
+        } else {
+            current_seq.append(line);
+        }
+    }
+    if (!current_seq.empty()) {
+        reads.push_back(current_seq);
+    }
     return reads;
 }

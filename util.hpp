@@ -2,62 +2,66 @@
 #define UTIL_HPP
 
 #include <string>
-#include <string_view>
 #include <vector>
-using namespace std;
+#include <string_view>
 
 /*
  * encode_kmer_bit:
- * Codifica un k‑mer usando 2 bit per base (A->0, C->1, G->2, T->3).
+ *   Converte A,C,G,T in 2 bit ciascuno (A->00, C->01, G->10, T->11).
  */
-unsigned int encode_kmer_bit(const string &kmer);
+unsigned int encode_kmer_bit(const std::string &kmer);
 
 /*
  * sliding_window_read:
- * Segmenta una read in k‑mer utilizzando una finestra scorrevole (step = 1).
+ *   Genera k-mer avanzando di step. Non usata direttamente nel main.
  */
-vector<string> sliding_window_read(const string &read, int k, int step = 1);
+std::vector<std::string> sliding_window_read(const std::string &read, int k, int step = 1);
 
 /*
  * reverse_complement:
- * Restituisce il reverse complement di una sequenza nucleotidica.
+ *   Ritorna il reverse complement di una stringa di DNA.
  */
-string reverse_complement(const string &seq);
+std::string reverse_complement(const std::string &seq);
 
 /*
  * CompressedFingerprint:
- *   - comp_fp: vettore dei codici compressi (utilizzando unsigned int)
- *   - comp_kmers: i k‑mer corrispondenti (non ridondanti) memorizzati come string_view.
- *   - comp_indices: gli indici originali dei k‑mer nella read.
+ *   comp_fp       : fingerprint compressi (senza ripetizioni consecutive)
+ *   comp_kmers    : i k-mer corrispondenti
+ *   comp_indices  : indici di partenza di ogni “blocco” compresso
  */
 struct CompressedFingerprint {
-    vector<unsigned int> comp_fp;
-    vector<string_view> comp_kmers;
-    vector<int> comp_indices;
+    std::vector<unsigned int> comp_fp;
+    std::vector<std::string_view> comp_kmers;
+    std::vector<int> comp_indices;
+};
+
+/*
+ * ProcessedRead:
+ *   fingerprint, kmers, e comp (compressione)
+ */
+struct ProcessedRead {
+    std::vector<unsigned int> fingerprint;
+    std::vector<std::string_view> kmers;
+    CompressedFingerprint comp;
 };
 
 /*
  * compress_fingerprint:
- * Comprimi la fingerprint eliminando duplicati consecutivi e registrando gli indici.
+ *   Elimina le ripetizioni consecutive in fingerprint.
  */
-CompressedFingerprint compress_fingerprint(const vector<unsigned int> &fingerprint, const vector<string_view> &kmers);
-
-/*
- * ProcessedRead:
- *   - comp: fingerprint compressa.
- *   - kmers: lista completa dei k‑mer (string_view).
- *   - fingerprint: vettore completo dei codici (non compresso) usando 32 bit.
- */
-struct ProcessedRead {
-    CompressedFingerprint comp;
-    vector<string_view> kmers;
-    vector<unsigned int> fingerprint;
-};
+CompressedFingerprint compress_fingerprint(const std::vector<unsigned int> &fingerprint,
+                                           const std::vector<std::string_view> &kmers);
 
 /*
  * process_read:
- * Data una read e il valore di k, segmenta in k‑mer usando codifica bit‑level.
+ *   Versione standard (in 2 passate).
  */
-ProcessedRead process_read(const string &read, int k);
+ProcessedRead process_read(const std::string &read, int k);
+
+/*
+ * process_read_optimized (OPKP):
+ *   Calcola i fingerprint e la compressione in un’unica passata.
+ */
+ProcessedRead process_read_optimized(const std::string &read, int k);
 
 #endif
