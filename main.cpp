@@ -75,14 +75,16 @@ struct ReadData
     string forward;
     string reverse_seq;
 
-    ProcessedRead pr_fwd;
-    ProcessedRead pr_rev;
+    ProcessedRead pr_fwd; // fingerprint processata (orientamento forward)
+    ProcessedRead pr_rev; // fingerprint processata (orientamento reverse)
 
+    // Strutture di appoggio per HSIF
     unordered_set<long long> set_fwd;
     unordered_set<long long> set_rev;
     vector<long long> sorted_fwd;
     vector<long long> sorted_rev;
 
+    // Suffix automaton build “on demand”
     bool sa_built_fwd = false;
     bool sa_built_rev = false;
     SuffixAutomaton suffix_automaton_fwd;
@@ -130,7 +132,7 @@ struct JsonResult
 };
 
 /*
- * Forward declaration
+ * Forward declaration (metodo base di confronto)
  */
 static OverlapResult compare_candidate_pair(ReadData &r1,
                                             ReadData &r2,
@@ -144,10 +146,10 @@ static OverlapResult compare_candidate_pair(ReadData &r1,
  * Funzioni di utilità
  * =====================================================================================
  */
-// La funzione ora utilizza le API Mach su macOS per ottenere la memoria residente attuale.
 static size_t getMemoryUsageKB()
 {
 #ifdef _WIN32
+    // (Eventuale implementazione su Windows)
     PROCESS_MEMORY_COUNTERS_EX pmc;
     if (GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS *)&pmc, sizeof(pmc)))
     {
@@ -155,6 +157,7 @@ static size_t getMemoryUsageKB()
     }
     return 0;
 #elif defined(__APPLE__)
+    // Uso delle API Mach su macOS per ottenere la memoria residente attuale
     mach_task_basic_info info;
     mach_msg_type_number_t infoCount = MACH_TASK_BASIC_INFO_COUNT;
     kern_return_t kr = task_info(mach_task_self(), MACH_TASK_BASIC_INFO,
@@ -165,9 +168,10 @@ static size_t getMemoryUsageKB()
     }
     return info.resident_size / 1024; // Memoria attuale in KB
 #else
+    // Su Linux, ru_maxrss è il picco di memoria usato (in KB)
     struct rusage usage;
     getrusage(RUSAGE_SELF, &usage);
-    return usage.ru_maxrss; // Su Linux questo restituisce il picco, eventualmente va adattato
+    return usage.ru_maxrss;
 #endif
 }
 
@@ -187,9 +191,10 @@ static string getFingerprintRegion(const ProcessedRead &pr, int comp_start, int 
 }
 
 /*
- * Se overlap < min_overlap => "SCARTATA"
- * Se troppi valori consecutivi => "SCARTATA - troppi valori..."
- * Altrimenti stringa vuota => "non scartato"
+ * get_overlap_annotation
+ *   - Se overlap < min_overlap => “(SCARTATA)”
+ *   - Se troppi caratteri consecutivi => “(SCARTATA - troppi valori consecutivi...)”
+ *   - Altrimenti restituisce stringa vuota.
  */
 static string get_overlap_annotation(const string &region,
                                      int fingerprint_match,
@@ -239,15 +244,14 @@ static string safe_substr(const string &s, size_t start, size_t length)
 
 /*
  * =====================================================================================
- * Algoritmi Overlap
- * (I metodi FGOE, AOE, KHS e COIN rimangono invariati)
+ * Algoritmi Overlap (FGOE, AOE, KHS, COIN)
  * =====================================================================================
  */
-// 1) FGOE
-static tuple<int, int, int> fingerprint_guided_overlap_extension(const ProcessedRead &pr1,
-                                                                 const ProcessedRead &pr2,
-                                                                 int k,
-                                                                 int min_overlap)
+// 1) Fingerprint-Guided Overlap Extension (FGOE)
+static tuple<int,int,int> fingerprint_guided_overlap_extension(const ProcessedRead &pr1,
+                                                               const ProcessedRead &pr2,
+                                                               int k,
+                                                               int min_overlap)
 {
     const auto &fp1 = pr1.comp.comp_fp;
     const auto &fp2 = pr2.comp.comp_fp;
@@ -255,11 +259,12 @@ static tuple<int, int, int> fingerprint_guided_overlap_extension(const Processed
     int size2 = (int)fp2.size();
     if (size1 == 0 || size2 == 0)
     {
-        return {0, 0, 0};
+        return {0,0,0};
     }
     int i = size1 - 1;
     int j = 0;
     int length_match = 0;
+    // Confronta dal “finale” di fp1 con l’“inizio” di fp2
     while (i >= 0 && j < size2 && fp1[i] == fp2[j])
     {
         length_match++;
@@ -268,18 +273,18 @@ static tuple<int, int, int> fingerprint_guided_overlap_extension(const Processed
     }
     if (length_match >= min_overlap)
     {
-        int startA = pr1.comp.comp_indices[i + 1];
+        int startA = pr1.comp.comp_indices[i+1];
         int startB = pr2.comp.comp_indices[0];
         return {length_match, startA, startB};
     }
-    return {0, 0, 0};
+    return {0,0,0};
 }
 
-// 2) AOE
-static tuple<int, int, int> adaptive_overlap_extension(const ProcessedRead &pr1,
-                                                       const ProcessedRead &pr2,
-                                                       int k,
-                                                       int min_overlap)
+// 2) Adaptive Overlap Extension (AOE)
+static tuple<int,int,int> adaptive_overlap_extension(const ProcessedRead &pr1,
+                                                     const ProcessedRead &pr2,
+                                                     int k,
+                                                     int min_overlap)
 {
     const auto &fp1 = pr1.comp.comp_fp;
     const auto &fp2 = pr2.comp.comp_fp;
@@ -287,7 +292,7 @@ static tuple<int, int, int> adaptive_overlap_extension(const ProcessedRead &pr1,
     int n2 = (int)fp2.size();
     if (n1 == 0 || n2 == 0)
     {
-        return {0, 0, 0};
+        return {0,0,0};
     }
     int best_len = 0, best_x = 0, best_y = 0;
     for (int x = 0; x < n1; x++)
@@ -297,7 +302,8 @@ static tuple<int, int, int> adaptive_overlap_extension(const ProcessedRead &pr1,
             if (fp1[x] == fp2[y])
             {
                 int tmp_len = 1;
-                int xx = x + 1, yy = y + 1;
+                int xx = x + 1;
+                int yy = y + 1;
                 while (xx < n1 && yy < n2 && fp1[xx] == fp2[yy])
                 {
                     tmp_len++;
@@ -310,16 +316,12 @@ static tuple<int, int, int> adaptive_overlap_extension(const ProcessedRead &pr1,
                     best_x = x;
                     best_y = y;
                     if (best_len >= min_overlap)
-                    {
                         break;
-                    }
                 }
             }
         }
         if (best_len >= min_overlap)
-        {
             break;
-        }
     }
     if (best_len >= min_overlap)
     {
@@ -327,14 +329,14 @@ static tuple<int, int, int> adaptive_overlap_extension(const ProcessedRead &pr1,
         int startB = pr2.comp.comp_indices[best_y];
         return {best_len, startA, startB};
     }
-    return {0, 0, 0};
+    return {0,0,0};
 }
 
-// 3) KHS
-static tuple<int, int, int> kmer_hopping_search(const ProcessedRead &pr1,
-                                                const ProcessedRead &pr2,
-                                                int k,
-                                                int min_overlap)
+// 3) Kmer Hopping Search (KHS)
+static tuple<int,int,int> kmer_hopping_search(const ProcessedRead &pr1,
+                                              const ProcessedRead &pr2,
+                                              int k,
+                                              int min_overlap)
 {
     const auto &fp1 = pr1.comp.comp_fp;
     const auto &fp2 = pr2.comp.comp_fp;
@@ -342,8 +344,9 @@ static tuple<int, int, int> kmer_hopping_search(const ProcessedRead &pr1,
     int n2 = (int)fp2.size();
     if (n1 == 0 || n2 == 0)
     {
-        return {0, 0, 0};
+        return {0,0,0};
     }
+    // Mappa di posizioni per i fingerprint di pr2
     unordered_map<unsigned int, vector<int>> positionsInB;
     positionsInB.reserve(n2);
     for (int i = 0; i < n2; i++)
@@ -359,7 +362,8 @@ static tuple<int, int, int> kmer_hopping_search(const ProcessedRead &pr1,
             for (int posB : it->second)
             {
                 int length_match = 1;
-                int xx = i + 1, yy = posB + 1;
+                int xx = i + 1;
+                int yy = posB + 1;
                 while (xx < n1 && yy < n2 && fp1[xx] == fp2[yy])
                 {
                     length_match++;
@@ -372,16 +376,12 @@ static tuple<int, int, int> kmer_hopping_search(const ProcessedRead &pr1,
                     best_x = i;
                     best_y = posB;
                     if (best_len >= min_overlap)
-                    {
                         break;
-                    }
                 }
             }
         }
         if (best_len >= min_overlap)
-        {
             break;
-        }
     }
     if (best_len >= min_overlap)
     {
@@ -389,14 +389,14 @@ static tuple<int, int, int> kmer_hopping_search(const ProcessedRead &pr1,
         int startB = pr2.comp.comp_indices[best_y];
         return {best_len, startA, startB};
     }
-    return {0, 0, 0};
+    return {0,0,0};
 }
 
-// 4) COIN (Combined Overlap IntelliSearch)
-static tuple<int, int, int> combined_overlap_intellisearch(const ProcessedRead &pr1,
-                                                           const ProcessedRead &pr2,
-                                                           int k,
-                                                           int min_overlap)
+// 4) Combined Overlap IntelliSearch (COIN)
+static tuple<int,int,int> combined_overlap_intellisearch(const ProcessedRead &pr1,
+                                                         const ProcessedRead &pr2,
+                                                         int k,
+                                                         int min_overlap)
 {
     auto [fgoe_len, fgoe_startA, fgoe_startB] = fingerprint_guided_overlap_extension(pr1, pr2, k, 1);
     auto [aoe_len, aoe_startA, aoe_startB] = adaptive_overlap_extension(pr1, pr2, k, 1);
@@ -404,20 +404,23 @@ static tuple<int, int, int> combined_overlap_intellisearch(const ProcessedRead &
 
     if (fgoe_len == 0 && aoe_len == 0 && khs_len == 0)
     {
-        return {0, 0, 0};
+        return {0,0,0};
     }
-    vector<tuple<int, int, int>> partials = {
+    // Ordina i match parziali
+    vector<tuple<int,int,int>> partials = {
         {fgoe_len, fgoe_startA, fgoe_startB},
         {aoe_len, aoe_startA, aoe_startB},
-        {khs_len, khs_startA, khs_startB}};
+        {khs_len, khs_startA, khs_startB}
+    };
     sort(partials.begin(), partials.end(),
-         [](auto &a, auto &b)
-         { return get<1>(a) < get<1>(b); });
+         [](auto &a, auto &b) {
+             return get<1>(a) < get<1>(b);
+         });
 
     int best_len = 0, best_startA = 0, best_startB = 0;
     for (int i = 0; i < 3; i++)
     {
-        for (int j = i + 1; j < 3; j++)
+        for (int j = i+1; j < 3; j++)
         {
             auto [len1, sA1, sB1] = partials[i];
             auto [len2, sA2, sB2] = partials[j];
@@ -438,6 +441,7 @@ static tuple<int, int, int> combined_overlap_intellisearch(const ProcessedRead &
             }
         }
     }
+    // Fallback se non c’è combinazione migliore
     int naive_best = 0, naive_A = 0, naive_B = 0;
     for (auto &p : partials)
     {
@@ -456,18 +460,21 @@ static tuple<int, int, int> combined_overlap_intellisearch(const ProcessedRead &
     {
         return {naive_best, naive_A, naive_B};
     }
-    return {0, 0, 0};
+    return {0,0,0};
 }
 
 /*
  * =====================================================================================
- * OIIB, HCPG, HSIF, building
+ * Costruzione indici e generazione coppie (OIIB, HCPG, HSIF)
  * =====================================================================================
  */
-void build_inverted_index_optimized(const vector<ReadData> &all_reads,
-                                    unordered_map<long long, vector<int>> &index_fwd,
-                                    unordered_map<long long, vector<int>> &index_rev)
+
+// buildInvertedIndex: ex build_inverted_index_optimized
+void buildInvertedIndex(const vector<ReadData> &all_reads,
+                        unordered_map<long long, vector<int>> &index_fwd,
+                        unordered_map<long long, vector<int>> &index_rev)
 {
+    // Per ogni read, recupera l’insieme dei fingerprint compressi (forward e reverse)
     for (int i = 0; i < (int)all_reads.size(); i++)
     {
         {
@@ -489,38 +496,40 @@ void build_inverted_index_optimized(const vector<ReadData> &all_reads,
     }
 }
 
-vector<Pair> generate_candidate_pairs_hash(const unordered_map<long long, vector<int>> &index_fwd,
-                                           const unordered_map<long long, vector<int>> &index_rev)
+// generateCandidatePairs: ex generate_candidate_pairs_hash
+vector<Pair> generateCandidatePairs(const unordered_map<long long, vector<int>> &index_fwd,
+                                    const unordered_map<long long, vector<int>> &index_rev)
 {
     unordered_set<Pair, PairHash> pairs;
+    // Dalle mappe forward
     for (const auto &kv : index_fwd)
     {
         const vector<int> &vec = kv.second;
         for (size_t i = 0; i < vec.size(); i++)
         {
-            for (size_t j = i + 1; j < vec.size(); j++)
+            for (size_t j = i+1; j < vec.size(); j++)
             {
                 int a = vec[i], b = vec[j];
-                if (a > b)
-                    std::swap(a, b);
-                pairs.insert({a, b});
+                if (a > b) std::swap(a,b);
+                pairs.insert({a,b});
             }
         }
     }
+    // Dalle mappe reverse
     for (const auto &kv : index_rev)
     {
         const vector<int> &vec = kv.second;
         for (size_t i = 0; i < vec.size(); i++)
         {
-            for (size_t j = i + 1; j < vec.size(); j++)
+            for (size_t j = i+1; j < vec.size(); j++)
             {
                 int a = vec[i], b = vec[j];
-                if (a > b)
-                    std::swap(a, b);
-                pairs.insert({a, b});
+                if (a > b) std::swap(a,b);
+                pairs.insert({a,b});
             }
         }
     }
+    // Incrocio fwd-rev
     for (const auto &kv : index_fwd)
     {
         auto it = index_rev.find(kv.first);
@@ -532,12 +541,10 @@ vector<Pair> generate_candidate_pairs_hash(const unordered_map<long long, vector
             {
                 for (int r : vr)
                 {
-                    if (f == r)
-                        continue;
+                    if (f == r) continue;
                     int a = f, b = r;
-                    if (a > b)
-                        std::swap(a, b);
-                    pairs.insert({a, b});
+                    if (a > b) std::swap(a,b);
+                    pairs.insert({a,b});
                 }
             }
         }
@@ -545,8 +552,11 @@ vector<Pair> generate_candidate_pairs_hash(const unordered_map<long long, vector
     return vector<Pair>(pairs.begin(), pairs.end());
 }
 
-int hybrid_sorted_intersection_size(const vector<long long> &v1, const vector<long long> &v2)
+// Funzione di intersezione ibrida (HSIF)
+int hybrid_sorted_intersection_size(const vector<long long> &v1,
+                                    const vector<long long> &v2)
 {
+    // Scegli dinamicamente il metodo
     if (v1.size() < 20 || v2.size() < 20)
     {
         int cnt = 0;
@@ -555,9 +565,7 @@ int hybrid_sorted_intersection_size(const vector<long long> &v1, const vector<lo
             for (auto &x : v1)
             {
                 if (binary_search(v2.begin(), v2.end(), x))
-                {
                     cnt++;
-                }
             }
         }
         else
@@ -565,24 +573,19 @@ int hybrid_sorted_intersection_size(const vector<long long> &v1, const vector<lo
             for (auto &x : v2)
             {
                 if (binary_search(v1.begin(), v1.end(), x))
-                {
                     cnt++;
-                }
             }
         }
         return cnt;
     }
+    // Altrimenti due puntatori
     int i = 0, j = 0, cnt = 0;
     while (i < (int)v1.size() && j < (int)v2.size())
     {
         if (v1[i] < v2[j])
-        {
             i++;
-        }
         else if (v2[j] < v1[i])
-        {
             j++;
-        }
         else
         {
             cnt++;
@@ -593,18 +596,37 @@ int hybrid_sorted_intersection_size(const vector<long long> &v1, const vector<lo
     return cnt;
 }
 
-static void build_read_data(vector<ReadData> &all_reads, const vector<string> &reads, int k)
+/*
+ * buildAllReadsData:
+ *   Rimpiazza la precedente build_read_data_* per gestire la logica di fingerprint solido.
+ */
+static void buildAllReadsData(vector<ReadData> &all_reads,
+                              const vector<string> &reads,
+                              int k,
+                              bool use_solid_fingerprint,
+                              const unordered_set<unsigned int> &solid_fingerprint_set)
 {
     for (size_t i = 0; i < all_reads.size(); i++)
     {
         all_reads[i].forward = reads[i];
         all_reads[i].reverse_seq = reverse_complement(reads[i]);
-        all_reads[i].pr_fwd = process_read_optimized(all_reads[i].forward, k);
-        all_reads[i].pr_rev = process_read_optimized(all_reads[i].reverse_seq, k);
+
+        if (use_solid_fingerprint)
+        {
+            // processReadSolidFingerprint: filtra i fingerprint non “solidi”
+            all_reads[i].pr_fwd = processReadSolidFingerprint(all_reads[i].forward, k, solid_fingerprint_set);
+            all_reads[i].pr_rev = processReadSolidFingerprint(all_reads[i].reverse_seq, k, solid_fingerprint_set);
+        }
+        else
+        {
+            // processReadFingerprint: calcola in un'unica passata fingerprint e compressione
+            all_reads[i].pr_fwd = processReadFingerprint(all_reads[i].forward, k);
+            all_reads[i].pr_rev = processReadFingerprint(all_reads[i].reverse_seq, k);
+        }
     }
 }
 
-static void fill_fingerprint_sets(vector<ReadData> &all_reads)
+static void fillFingerprintSets(vector<ReadData> &all_reads)
 {
     for (auto &rd : all_reads)
     {
@@ -623,24 +645,9 @@ static void fill_fingerprint_sets(vector<ReadData> &all_reads)
     }
 }
 
-static void build_inverted_index(const vector<ReadData> &all_reads,
-                                 unordered_map<long long, vector<int>> &index_fwd,
-                                 unordered_map<long long, vector<int>> &index_rev)
-{
-    build_inverted_index_optimized(all_reads, index_fwd, index_rev);
-}
-
-static vector<Pair> generate_candidate_pairs_vector(
-    const unordered_map<long long, vector<int>> &index_fwd,
-    const unordered_map<long long, vector<int>> &index_rev)
-{
-    return generate_candidate_pairs_hash(index_fwd, index_rev);
-}
-
 /*
  * =====================================================================================
  * compare_candidate_pair
- * (Rimane invariata la logica, come nelle versioni precedenti)
  * =====================================================================================
  */
 static OverlapResult compare_candidate_pair(ReadData &r1,
@@ -652,6 +659,7 @@ static OverlapResult compare_candidate_pair(ReadData &r1,
 {
     OverlapResult best;
 
+    // Per aggiornare il best overlap
     auto try_update = [&](int len, int comp_idx1, int comp_idx2,
                           const ProcessedRead &prA, const ProcessedRead &prB,
                           const string &readA, const string &readB,
@@ -676,6 +684,7 @@ static OverlapResult compare_candidate_pair(ReadData &r1,
         }
     };
 
+    // Esegue i 4 metodi (FGOE, AOE, KHS, COIN) su tutti gli orientamenti (ff, fr, rf, rr)
     auto compute_best_overlap_4stages = [&](ProcessedRead &A, ProcessedRead &B,
                                             string &rA, string &rB,
                                             const string &oA, const string &oB,
@@ -686,7 +695,8 @@ static OverlapResult compare_candidate_pair(ReadData &r1,
             auto [matchLen, startA, startB] = fingerprint_guided_overlap_extension(A, B, k, min_overlap);
             if (matchLen >= min_overlap)
             {
-                int idxA = 0, idxB = 0;
+                int idxA = 0;
+                int idxB = 0;
                 for (int i = 0; i < (int)A.comp.comp_indices.size(); i++)
                 {
                     if (A.comp.comp_indices[i] == startA)
@@ -712,7 +722,8 @@ static OverlapResult compare_candidate_pair(ReadData &r1,
             auto [matchLen, startA, startB] = adaptive_overlap_extension(A, B, k, min_overlap);
             if (matchLen >= min_overlap)
             {
-                int idxA = 0, idxB = 0;
+                int idxA = 0;
+                int idxB = 0;
                 for (int i = 0; i < (int)A.comp.comp_indices.size(); i++)
                 {
                     if (A.comp.comp_indices[i] == startA)
@@ -738,7 +749,8 @@ static OverlapResult compare_candidate_pair(ReadData &r1,
             auto [matchLen, startA, startB] = kmer_hopping_search(A, B, k, min_overlap);
             if (matchLen >= min_overlap)
             {
-                int idxA = 0, idxB = 0;
+                int idxA = 0;
+                int idxB = 0;
                 for (int i = 0; i < (int)A.comp.comp_indices.size(); i++)
                 {
                     if (A.comp.comp_indices[i] == startA)
@@ -764,7 +776,8 @@ static OverlapResult compare_candidate_pair(ReadData &r1,
             auto [matchLen, startA, startB] = combined_overlap_intellisearch(A, B, k, min_overlap);
             if (matchLen >= min_overlap)
             {
-                int idxA = 0, idxB = 0;
+                int idxA = 0;
+                int idxB = 0;
                 for (int i = 0; i < (int)A.comp.comp_indices.size(); i++)
                 {
                     if (A.comp.comp_indices[i] == startA)
@@ -787,6 +800,7 @@ static OverlapResult compare_candidate_pair(ReadData &r1,
         }
     };
 
+    // Costruisce un suffix automaton se necessario
     auto compute_best_overlap_suffix_automaton = [&](ProcessedRead &A, ProcessedRead &B,
                                                      string &rA, string &rB,
                                                      const string &oA, const string &oB,
@@ -818,11 +832,13 @@ static OverlapResult compare_candidate_pair(ReadData &r1,
         }
     };
 
+    // 4 stadi su ff, fr, rf, rr
     compute_best_overlap_4stages(r1.pr_fwd, r2.pr_fwd, r1.forward, r2.forward, "forward", "forward", "ff");
     compute_best_overlap_4stages(r1.pr_fwd, r2.pr_rev, r1.forward, r2.reverse_seq, "forward", "reverse", "fr");
     compute_best_overlap_4stages(r1.pr_rev, r2.pr_fwd, r1.reverse_seq, r2.forward, "reverse", "forward", "rf");
     compute_best_overlap_4stages(r1.pr_rev, r2.pr_rev, r1.reverse_seq, r2.reverse_seq, "reverse", "reverse", "rr");
 
+    // Se non abbiamo raggiunto il min_overlap, proviamo il suffix automaton
     if (best.overlap_len < min_overlap)
     {
         compute_best_overlap_suffix_automaton(r1.pr_fwd, r2.pr_fwd, r1.forward, r2.forward,
@@ -838,6 +854,7 @@ static OverlapResult compare_candidate_pair(ReadData &r1,
                                               "reverse", "reverse", "rr",
                                               r1.sa_built_rev, r1.suffix_automaton_rev);
     }
+
     return best;
 }
 
@@ -846,24 +863,27 @@ static OverlapResult compare_candidate_pair(ReadData &r1,
  * Funzione per scrivere il JSON ordinato
  * =====================================================================================
  */
-void write_sorted_json(vector<JsonResult>& json_results, const string& filename) {
+void write_sorted_json(vector<JsonResult> &json_results, const string &filename)
+{
     // Ordina il vettore in base ai campi "read1" e "read2"
-    sort(json_results.begin(), json_results.end(), [](const JsonResult &a, const JsonResult &b) {
+    sort(json_results.begin(), json_results.end(), [](const JsonResult &a, const JsonResult &b){
         if (a.read1 != b.read1)
             return a.read1 < b.read1;
         return a.read2 < b.read2;
     });
-
-    // Scrive il file JSON ordinato
+    // Scrive su file
     ofstream jf(filename);
-    if (!jf.is_open()) {
+    if (!jf.is_open())
+    {
         cerr << "Errore apertura file " << filename << "\n";
         return;
     }
     jf << "[\n";
-    for (size_t i = 0; i < json_results.size(); i++) {
+    for (size_t i = 0; i < json_results.size(); i++)
+    {
         jf << json_results[i].json;
-        if (i < json_results.size() - 1) {
+        if (i < json_results.size() - 1)
+        {
             jf << ",\n";
         }
     }
@@ -880,12 +900,15 @@ static void print_usage(const char *prog_name)
 {
     cerr << "Usage: " << prog_name << " -f <file_fasta> [options]\n"
          << "  -f, --fasta <file>\n"
-         << "  -m, --min_overlap <int>          [default: 13]\n"
-         << "  -r, --max_repeat_threshold <int> [default: 10]\n"
-         << "  -k, --kmer <int>                 [default: 15]\n"
-         << "  -j, --json <file>                [default: results.json]\n"
-         << "  -t, --threads <int>              [default: hardware_concurrency]\n"
+         << "  -m, --min_overlap <int>            [default: 13]\n"
+         << "  -r, --max_repeat_threshold <int>   [default: 10]\n"
+         << "  -k, --kmer <int>                   [default: 15]\n"
+         << "  -j, --json <file>                  [default: results.json]\n"
+         << "  -t, --threads <int>                [default: hardware_concurrency]\n"
          << "  -v, --verbose\n"
+         << "  --solid_fingerprint                Abilita la logica di fingerprint solido\n"
+         << "  --solid_min_freq <int>             [default: 2]\n"
+         << "  --solid_max_freq <int>             [default: 100000]\n"
          << "  -h, --help\n";
 }
 
@@ -896,7 +919,7 @@ static void print_usage(const char *prog_name)
  */
 int main(int argc, char *argv[])
 {
-    // Avvio del thread di logging asincrono
+    // Avvio thread di logging asincrono
     thread loggerThread(loggingThreadFunction);
 
     string fasta_file;
@@ -907,6 +930,11 @@ int main(int argc, char *argv[])
     unsigned int num_threads = 0;
     bool verbose = false;
 
+    // Parametri per “solid fingerprint”
+    bool use_solid_fingerprint = false;
+    int solid_min_freq = 1;
+    int solid_max_freq = 100000;
+
     struct option longopts[] = {
         {"fasta", required_argument, 0, 'f'},
         {"min_overlap", required_argument, 0, 'm'},
@@ -915,12 +943,17 @@ int main(int argc, char *argv[])
         {"json", required_argument, 0, 'j'},
         {"threads", required_argument, 0, 't'},
         {"verbose", no_argument, 0, 'v'},
+        {"solid_fingerprint", no_argument, 0, 1000},
+        {"solid_min_freq", required_argument, 0, 1001},
+        {"solid_max_freq", required_argument, 0, 1002},
         {"help", no_argument, 0, 'h'},
-        {0, 0, 0, 0}};
+        {0,0,0,0}
+    };
     int opt;
-    while ((opt = getopt_long(argc, argv, "f:m:r:k:j:t:vh", longopts, NULL)) != -1)
+    int longindex=0;
+    while ((opt = getopt_long(argc, argv, "f:m:r:k:j:t:vh", longopts, &longindex)) != -1)
     {
-        switch (opt)
+        switch(opt)
         {
         case 'f':
             fasta_file = optarg;
@@ -943,6 +976,15 @@ int main(int argc, char *argv[])
         case 'v':
             verbose = true;
             break;
+        case 1000:
+            use_solid_fingerprint = true;
+            break;
+        case 1001:
+            solid_min_freq = atoi(optarg);
+            break;
+        case 1002:
+            solid_max_freq = atoi(optarg);
+            break;
         case 'h':
             print_usage(argv[0]);
             return 0;
@@ -960,13 +1002,9 @@ int main(int argc, char *argv[])
     if (num_threads == 0)
     {
         num_threads = thread::hardware_concurrency();
-        if (num_threads == 0)
-        {
-            num_threads = 2;
-        }
+        if (num_threads == 0) num_threads = 2;
     }
 
-    // Operazioni iniziali (non incluse nella misurazione)
     async_log("Lettura del file FASTA: " + fasta_file + "\n");
     vector<string> reads = read_fasta_buffered(fasta_file);
     if (reads.empty())
@@ -975,30 +1013,57 @@ int main(int argc, char *argv[])
         return 1;
     }
     async_log("Numero di read: " + to_string(reads.size()) + "\n");
-    async_log("k-mer: " + to_string(k) + "\n");
+    async_log("Fingerprint/k (k-mer): " + to_string(k) + "\n");
 
+    // Se abilitiamo i fingerprint solidi, costruiamo la tabella di frequenza
+    unordered_set<unsigned int> solid_fingerprint_set;
+    if (use_solid_fingerprint)
+    {
+        async_log("Costruzione tabella di frequenza globale (fingerprint)...\n");
+        auto freq_map = buildGlobalFingerprintFrequency(reads, k); // ex build_global_kmer_frequency
+        async_log("Filtraggio fingerprint (min_freq=" + to_string(solid_min_freq) +
+                  ", max_freq=" + to_string(solid_max_freq) + ")...\n");
+        for (auto &kv : freq_map)
+        {
+            if (kv.second >= solid_min_freq && kv.second <= solid_max_freq)
+            {
+                solid_fingerprint_set.insert(kv.first);
+            }
+        }
+        freq_map.clear();
+        freq_map.rehash(0);
+        async_log("Totale fingerprint solidi: " + to_string(solid_fingerprint_set.size()) + "\n");
+    }
+
+    // Costruisce la struttura all_reads
     vector<ReadData> all_reads(reads.size());
-    build_read_data(all_reads, reads, k);
-    fill_fingerprint_sets(all_reads);
+    buildAllReadsData(all_reads, reads, k, use_solid_fingerprint, solid_fingerprint_set);
 
-    // Svuota il vettore delle reads, non più necessario (risparmia memoria)
+    // Rilascia reads
     reads.clear();
     reads.shrink_to_fit();
 
+    // Riempie i set e i vector ordinati per HSIF
+    fillFingerprintSets(all_reads);
+
+    // Costruisce l’indice invertito
     async_log("Costruzione indici invertiti (OIIB)...\n");
     unordered_map<long long, vector<int>> index_fwd, index_rev;
-    index_fwd.reserve(all_reads.size() * 4);
-    index_rev.reserve(all_reads.size() * 4);
-    build_inverted_index(all_reads, index_fwd, index_rev);
+    index_fwd.reserve(all_reads.size()*4);
+    index_rev.reserve(all_reads.size()*4);
+    buildInvertedIndex(all_reads, index_fwd, index_rev);
 
-    // Dopo la generazione delle coppie, liberiamo le mappe per ridurre l'uso di memoria
+    // Genera le coppie candidate
     async_log("Generazione coppie candidate (HCPG)...\n");
-    vector<Pair> candidate_pairs = generate_candidate_pairs_vector(index_fwd, index_rev);
+    vector<Pair> candidate_pairs = generateCandidatePairs(index_fwd, index_rev);
+
+    // Libera l’indice
     index_fwd.clear();
     index_rev.clear();
-    unordered_map<long long, vector<int>>().swap(index_fwd);
-    unordered_map<long long, vector<int>>().swap(index_rev);
+    index_fwd.rehash(0);
+    index_rev.rehash(0);
 
+    // Pre-filtraggio (HSIF)
     async_log("Pre-filtraggio delle coppie candidate (HSIF)...\n");
     vector<Pair> filtered;
     filtered.reserve(candidate_pairs.size());
@@ -1016,14 +1081,12 @@ int main(int argc, char *argv[])
             filtered.push_back(c);
         }
     }
-    // Liberiamo candidate_pairs, non più necessario
     candidate_pairs.clear();
     candidate_pairs.shrink_to_fit();
-    filtered.shrink_to_fit();
 
     async_log("Coppie candidate dopo filtro: " + to_string(filtered.size()) + "\n");
 
-    // Avvio della misurazione del tempo (I/O iniziali esclusi)
+    // Avvio cronometraggio
     using Clock = chrono::steady_clock;
     auto start_time = Clock::now();
 
@@ -1036,7 +1099,7 @@ int main(int argc, char *argv[])
 
     auto worker = [&]()
     {
-        while (true)
+        while(true)
         {
             size_t idx = candidateIndex.fetch_add(1);
             if (idx >= filtered.size())
@@ -1050,32 +1113,44 @@ int main(int argc, char *argv[])
                                                            max_repeat_threshold);
             if (best_ov.overlap_len > 0)
             {
-                string region_r1 = safe_substr(best_ov.r1, best_ov.start1, best_ov.end1 - best_ov.start1);
-                string region_r2 = safe_substr(best_ov.r2, best_ov.start2, best_ov.end2 - best_ov.start2);
-                string annotation = get_overlap_annotation(region_r1, best_ov.overlap_len, min_overlap, max_repeat_threshold);
+                // region r1 e r2
+                string region_r1 = safe_substr(best_ov.r1, best_ov.start1,
+                                               best_ov.end1 - best_ov.start1);
+                string region_r2 = safe_substr(best_ov.r2, best_ov.start2,
+                                               best_ov.end2 - best_ov.start2);
+                string annotation = get_overlap_annotation(region_r1,
+                                                           best_ov.overlap_len,
+                                                           min_overlap,
+                                                           max_repeat_threshold);
                 if (verbose)
                 {
                     async_log("-----------------------------------\n");
-                    async_log("Coppia di read " + to_string(p.i + 1) + " - " + to_string(p.j + 1) + "\n");
-                    async_log("Overlap = " + to_string(best_ov.overlap_len) + " " + annotation + "\n");
+                    async_log("Coppia di read " + to_string(p.i+1) +
+                              " - " + to_string(p.j+1) + "\n");
+                    async_log("Overlap = " + to_string(best_ov.overlap_len) +
+                              " " + annotation + "\n");
                     async_log("Algoritmo usato: " + best_ov.used_algorithm + "\n");
-                    async_log("Orientation: " + best_ov.orientation1 + " - " + best_ov.orientation2 + "\n");
+                    async_log("Orientation: " + best_ov.orientation1 + " - "
+                                             + best_ov.orientation2 + "\n");
                     async_log("Region r1: " + region_r1 + "\n");
                     async_log("Fingerprint r1: " + best_ov.fingerprint_r1 + "\n");
                     async_log("Region r2: " + region_r2 + "\n");
                     async_log("Fingerprint r2: " + best_ov.fingerprint_r2 + "\n");
                 }
+                // Se non scartata
                 if (annotation.find("SCARTATA") == string::npos)
                 {
                     ostringstream oss;
                     oss << "{";
-                    oss << "\"read1\":" << (p.i + 1) << ","
-                        << "\"read2\":" << (p.j + 1) << ","
+                    oss << "\"read1\":" << (p.i+1) << ","
+                        << "\"read2\":" << (p.j+1) << ","
                         << "\"orientation1\":\"" << best_ov.orientation1 << "\","
                         << "\"orientation2\":\"" << best_ov.orientation2 << "\","
-                        << "\"start1\":" << best_ov.start1 << ",\"end1\":" << best_ov.end1 << ","
+                        << "\"start1\":" << best_ov.start1 << ",\"end1\":"
+                        << best_ov.end1 << ","
                         << "\"len_read1\":" << best_ov.r1.size() << ","
-                        << "\"start2\":" << best_ov.start2 << ",\"end2\":" << best_ov.end2 << ","
+                        << "\"start2\":" << best_ov.start2 << ",\"end2\":"
+                        << best_ov.end2 << ","
                         << "\"len_read2\":" << best_ov.r2.size() << ","
                         << "\"overlap_length\":" << best_ov.overlap_len << ","
                         << "\"overlap_region_read1\":\"" << region_r1 << "\","
@@ -1084,10 +1159,9 @@ int main(int argc, char *argv[])
                         << "\"fingerprint_read2\":\"" << best_ov.fingerprint_r2 << "\","
                         << "\"used_algorithm\":\"" << best_ov.used_algorithm << "\"";
                     oss << "}";
-                    {
-                        lock_guard<mutex> lk(json_mutex);
-                        json_results.push_back(JsonResult{p.i + 1, p.j + 1, oss.str()});
-                    }
+
+                    lock_guard<mutex> lk(json_mutex);
+                    json_results.push_back(JsonResult{p.i+1, p.j+1, oss.str()});
                 }
             }
         }
@@ -1103,11 +1177,9 @@ int main(int argc, char *argv[])
     {
         t.join();
     }
-    // Liberiamo il vettore delle coppie filtrate
     filtered.clear();
     filtered.shrink_to_fit();
 
-    // Fine elaborazione: calcolo tempo di esecuzione e memoria usata
     auto end_time = Clock::now();
     double seconds = chrono::duration<double>(end_time - start_time).count();
     size_t mem_kb = getMemoryUsageKB();
@@ -1122,12 +1194,12 @@ int main(int argc, char *argv[])
     async_log("\nTempo di esecuzione: " + to_string(seconds) + " s\n");
     async_log("Memoria usata (attuale): " + to_string(mem_kb) + " KB\n");
 
-    // Segnala al thread di logging di terminare e attendi la sua terminazione
+    // Segnala terminazione al thread di logging
     loggingDone.store(true);
     logQueueCV.notify_one();
     loggerThread.join();
 
-    // Infine, se non è più necessario, liberiamo anche all_reads
+    // Rilascio finale di all_reads
     all_reads.clear();
     all_reads.shrink_to_fit();
 
