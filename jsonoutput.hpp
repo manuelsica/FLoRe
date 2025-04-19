@@ -1,26 +1,20 @@
 // jsonoutput.hpp
-// Header per la scrittura dei risultati in formato JSON.
-
+// Header per il modulo di output JSON.
 #ifndef JSONOUTPUT_HPP
 #define JSONOUTPUT_HPP
 
 #include <vector>
 #include <string>
 
-/*
- * Struttura JsonResult:
- * Contiene le informazioni per ogni risultato JSON, inclusi gli indici delle read e la stringa JSON formattata.
- */
-struct JsonResult
-{
-    int read1;
-    int read2;
-    std::string json;
+// Struttura per memorizzare il risultato JSON associato a una coppia di read.
+struct JsonResult {
+    int read1;            // Indice della prima read (1-indexed)
+    int read2;            // Indice della seconda read (1-indexed)
+    std::string json;     // Stringa JSON formattata
 };
 
 /*
- * Funzione write_sorted_json:
- * Ordina i risultati JSON in base ai campi read1 e read2 e li scrive su un file.
+ * write_sorted_json: Ordina i risultati per read1 e read2 e li scrive in un file JSON.
  */
 void write_sorted_json(std::vector<JsonResult> &json_results,
                        const std::string &filename);

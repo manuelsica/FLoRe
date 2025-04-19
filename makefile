@@ -1,14 +1,16 @@
+# Makefile per compilare il tool FLoRe
+# Utilizza g++ con standard C++17, abilitando -Wall e -O3 per ottimizzazione.
 CXX = g++
 CXXFLAGS = -std=c++17 -Wall -O3
 
-OBJS = main.o logging.o read.o util.o index.o overlap.o jsonoutput.o
+OBJS = main.o logging.o read.o util.o index.o overlap.o jsonoutput.o profiling.o
 
 all: FLORE_bin set-exec
 
 FLORE_bin: $(OBJS)
 	$(CXX) $(CXXFLAGS) -o FLORE_bin $(OBJS)
 
-main.o: main.cpp logging.hpp read.hpp util.hpp index.hpp overlap.hpp jsonoutput.hpp
+main.o: main.cpp logging.hpp read.hpp util.hpp index.hpp overlap.hpp jsonoutput.hpp profiling.hpp
 	$(CXX) $(CXXFLAGS) -c main.cpp
 
 logging.o: logging.cpp logging.hpp
@@ -28,6 +30,9 @@ overlap.o: overlap.cpp overlap.hpp index.hpp
 
 jsonoutput.o: jsonoutput.cpp jsonoutput.hpp
 	$(CXX) $(CXXFLAGS) -c jsonoutput.cpp
+
+profiling.o: profiling.cpp profiling.hpp
+	$(CXX) $(CXXFLAGS) -c profiling.cpp
 
 set-exec:
 	chmod +x FLORE_bin 2>/dev/null || true
