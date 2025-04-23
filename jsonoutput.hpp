@@ -1,3 +1,4 @@
+// jsonoutput.hpp
 #ifndef JSONOUTPUT_HPP
 #define JSONOUTPUT_HPP
 

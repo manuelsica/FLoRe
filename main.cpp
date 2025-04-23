@@ -125,7 +125,8 @@ int main(int argc, char *argv[])
         {"solid_min_freq", required_argument, 0, 1001},
         {"solid_max_freq", required_argument, 0, 1002},
         {"help", no_argument, 0, 'h'},
-        {0, 0, 0, 0}};
+        {0, 0, 0, 0}
+    };
 
     int opt, longindex = 0;
     while ((opt = getopt_long(argc, argv, "f:m:r:k:j:t:vh", longopts, &longindex)) != -1)
@@ -228,7 +229,9 @@ int main(int argc, char *argv[])
 
     // Costruisce la struttura ReadData per ogni read
     vector<ReadData> all_reads(processed_reads.size());
-    unordered_set<unsigned int> solid_fingerprint_set = use_solid_fingerprint ? buildSolidFingerprintSet(processed_reads, k, solid_min_freq, solid_max_freq) : unordered_set<unsigned int>();
+    unordered_set<unsigned int> solid_fingerprint_set = use_solid_fingerprint
+        ? buildSolidFingerprintSet(processed_reads, k, solid_min_freq, solid_max_freq)
+        : unordered_set<unsigned int>();
     buildAllReadsData(all_reads, processed_reads, k, use_solid_fingerprint, solid_fingerprint_set);
     processed_reads.clear();
     processed_reads.shrink_to_fit();
@@ -251,7 +254,7 @@ int main(int argc, char *argv[])
     index_fwd.rehash(0);
     index_rev.rehash(0);
 
-    // Pre-filtraggio: conserva solo le coppie con sufficiente intersezione dei fingerprint
+    // Pre-filtraggio: conserva solo le coppie con sufficiente intersezione
     async_log("Pre-filtraggio delle coppie candidate...\n");
     vector<Pair> filtered;
     filtered.reserve(candidate_pairs.size());
@@ -271,7 +274,7 @@ int main(int argc, char *argv[])
     candidate_pairs.shrink_to_fit();
     async_log("Coppie candidate dopo filtro: " + to_string(filtered.size()) + "\n");
 
-    // Segna l'inizio dell'elaborazione degli overlap nel profiling
+    // Segna l'inizio dell'elaborazione degli overlap
     profiler.mark("Inizio elaborazione overlap");
 
     // Elaborazione in multi-thread delle coppie candidate
@@ -322,25 +325,24 @@ int main(int argc, char *argv[])
                 continue;
             }
 
-            // --- FILTRO B: Banded SW identity ---
-            // --- FILTRO B: Complete Local Extension Engine (CLEE) ---
+            // --- FILTRO B: FCLA ---
             if (!pseudo_overlap::fingerprint_chained_local_align(
                 region_r1, region_r2,
-                k,          // k‑mer length
-                0.80,       // min_identity, es. 80%
-                k * 2       // max_gap, ad esempio 2*k
+                k,      // k-mer length
+                0.80,   // min_identity = 80%
+                k * 2   // max_gap
             ))
-        {
-            if (verbose) {
-                async_log("-----------------------------------\n");
-                async_log("Coppia read " + std::to_string(p.i+1)
-                          + " - " + std::to_string(p.j+1) + "\n");
-                async_log("Pseudo-overlap scartato: identità insufficiente (FCLA)\n");
+            {
+                if (verbose)
+                {
+                    async_log("-----------------------------------\n");
+                    async_log("Coppia read " + std::to_string(p.i + 1) + " - " + std::to_string(p.j + 1) + "\n");
+                    async_log("Pseudo-overlap scartato: identità insufficiente (FCLA)\n");
+                }
+                continue;
             }
-            continue;
-        }
 
-            // --- FILTRO C: Spectrum similarity (JS divergence) ---
+            // --- FILTRO C: Spectrum similarity ---
             if (!pseudo_overlap::spectrum_similarity(region_r1, region_r2))
             {
                 if (verbose)
@@ -402,21 +404,22 @@ int main(int argc, char *argv[])
                     << "\"used_algorithm\":\"" << best_ov.used_algorithm << "\""
                     << "}";
                 std::lock_guard<std::mutex> lk(json_mutex);
-                json_results.emplace_back(
-                    (int)(p.i + 1), (int)(p.j + 1), oss.str());
+                json_results.emplace_back((int)(p.i + 1), (int)(p.j + 1), oss.str());
             }
         }
     };
 
+    // Avvio del thread pool
     vector<thread> pool;
     pool.reserve(num_threads);
-    for (unsigned int th = 0; th < num_threads; th++)
+    for (unsigned int th = 0; th < num_threads; ++th)
         pool.emplace_back(worker);
     for (auto &t : pool)
         t.join();
     filtered.clear();
     filtered.shrink_to_fit();
 
+    // Fine profiling degli overlap
     profiler.mark("Fine elaborazione overlap");
 
     auto end_time = chrono::steady_clock::now();
@@ -433,9 +436,13 @@ int main(int argc, char *argv[])
 
     profiler.stop();
 
+    // Termina il thread di logging
     loggingDone.store(true);
     logQueueCV.notify_one();
     loggerThread.join();
+
+    if (logFile.is_open())
+        logFile.close();  // chiusura esplicita, evita che il distruttore provochi doppio close
 
     all_reads.clear();
     all_reads.shrink_to_fit();

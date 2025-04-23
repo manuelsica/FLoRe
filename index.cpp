@@ -1,12 +1,8 @@
 // index.cpp
-// Implementa le funzioni per la costruzione degli indici invertiti e il pre-filtraggio delle coppie candidate.
 #include "index.hpp"
-#include "util.hpp"
-#include "read.hpp"
 #include <algorithm>
-#include <unordered_set>
-#include <unordered_map>
 
+// buildAllReadsData e fillFingerprintSets rimangono invariati:
 void buildAllReadsData(std::vector<ReadData> &all_reads,
                        const std::vector<std::string> &reads,
                        int k,
@@ -15,7 +11,7 @@ void buildAllReadsData(std::vector<ReadData> &all_reads,
 {
     for (size_t i = 0; i < all_reads.size(); i++)
     {
-        all_reads[i].forward = reads[i];
+        all_reads[i].forward    = reads[i];
         all_reads[i].reverse_seq = reverse_complement(reads[i]);
         if (use_solid_fingerprint)
         {
@@ -35,9 +31,10 @@ void fillFingerprintSets(std::vector<ReadData> &all_reads)
     for (auto &rd : all_reads)
     {
         for (auto val : rd.pr_fwd.comp.comp_fp)
-            rd.set_fwd.insert((long long)val);
+            rd.set_fwd.insert(val);
         for (auto val : rd.pr_rev.comp.comp_fp)
-            rd.set_rev.insert((long long)val);
+            rd.set_rev.insert(val);
+
         rd.sorted_fwd.assign(rd.set_fwd.begin(), rd.set_fwd.end());
         rd.sorted_rev.assign(rd.set_rev.begin(), rd.set_rev.end());
         std::sort(rd.sorted_fwd.begin(), rd.sorted_fwd.end());
@@ -45,78 +42,81 @@ void fillFingerprintSets(std::vector<ReadData> &all_reads)
     }
 }
 
+// buildInvertedIndex ottimizzato
 void buildInvertedIndex(const std::vector<ReadData> &all_reads,
                         std::unordered_map<long long, std::vector<int>> &index_fwd,
                         std::unordered_map<long long, std::vector<int>> &index_rev)
 {
-    for (int i = 0; i < (int)all_reads.size(); i++)
+    // Stima il numero totale di chiavi per riservare spazio
+    size_t total_keys = 0;
+    for (const auto &rd : all_reads)
+        total_keys += rd.sorted_fwd.size() + rd.sorted_rev.size();
+    index_fwd.reserve(total_keys);
+    index_rev.reserve(total_keys);
+
+    // Costruisci il posting list usando solo le chiavi uniche in sorted_*
+    for (int i = 0; i < (int)all_reads.size(); ++i)
     {
-        {
-            std::unordered_set<long long> uniq(all_reads[i].pr_fwd.comp.comp_fp.begin(),
-                                               all_reads[i].pr_fwd.comp.comp_fp.end());
-            for (auto val : uniq)
-                index_fwd[val].push_back(i);
-        }
-        {
-            std::unordered_set<long long> uniq(all_reads[i].pr_rev.comp.comp_fp.begin(),
-                                               all_reads[i].pr_rev.comp.comp_fp.end());
-            for (auto val : uniq)
-                index_rev[val].push_back(i);
-        }
+        const auto &rd = all_reads[i];
+        for (auto key : rd.sorted_fwd)
+            index_fwd[key].push_back(i);
+        for (auto key : rd.sorted_rev)
+            index_rev[key].push_back(i);
     }
 }
 
-std::vector<Pair> generateCandidatePairs(const std::unordered_map<long long, std::vector<int>> &index_fwd,
-                                         const std::unordered_map<long long, std::vector<int>> &index_rev)
+// generateCandidatePairs ottimizzato
+std::vector<Pair> generateCandidatePairs(
+    const std::unordered_map<long long, std::vector<int>> &index_fwd,
+    const std::unordered_map<long long, std::vector<int>> &index_rev)
 {
-    std::unordered_set<Pair, PairHash> pairs;
+    std::vector<Pair> pairs;
+    // Accumula fwd–fwd
     for (const auto &kv : index_fwd)
     {
-        const std::vector<int> &vec = kv.second;
-        for (size_t i = 0; i < vec.size(); i++)
-            for (size_t j = i+1; j < vec.size(); j++)
-            {
-                int a = vec[i], b = vec[j];
-                if (a > b) std::swap(a, b);
-                pairs.insert({a, b});
-            }
+        const auto &v = kv.second;
+        for (size_t a = 0; a < v.size(); ++a)
+            for (size_t b = a + 1; b < v.size(); ++b)
+                pairs.push_back({std::min(v[a], v[b]), std::max(v[a], v[b])});
     }
+    // Accumula rev–rev
     for (const auto &kv : index_rev)
     {
-        const std::vector<int> &vec = kv.second;
-        for (size_t i = 0; i < vec.size(); i++)
-            for (size_t j = i+1; j < vec.size(); j++)
-            {
-                int a = vec[i], b = vec[j];
-                if (a > b) std::swap(a, b);
-                pairs.insert({a, b});
-            }
+        const auto &v = kv.second;
+        for (size_t a = 0; a < v.size(); ++a)
+            for (size_t b = a + 1; b < v.size(); ++b)
+                pairs.push_back({std::min(v[a], v[b]), std::max(v[a], v[b])});
     }
+    // Accumula cross fwd–rev
     for (const auto &kv : index_fwd)
     {
         auto it = index_rev.find(kv.first);
-        if (it != index_rev.end())
-        {
-            const std::vector<int> &vf = kv.second;
-            const std::vector<int> &vr = it->second;
-            for (int f : vf)
-                for (int r : vr)
-                {
-                    if (f == r) continue;
-                    int a = f, b = r;
-                    if (a > b) std::swap(a, b);
-                    pairs.insert({a, b});
-                }
-        }
+        if (it == index_rev.end()) continue;
+        const auto &vf = kv.second;
+        const auto &vr = it->second;
+        for (int x : vf)
+            for (int y : vr)
+                if (x != y)
+                    pairs.push_back({std::min(x, y), std::max(x, y)});
     }
-    return std::vector<Pair>(pairs.begin(), pairs.end());
+
+    // Ordina e rimuovi duplicati
+    std::sort(pairs.begin(), pairs.end(), [](const Pair &a, const Pair &b) {
+        return (a.i < b.i) || (a.i == b.i && a.j < b.j);
+    });
+    pairs.erase(std::unique(pairs.begin(), pairs.end(),
+                             [](const Pair &a, const Pair &b) {
+                                 return a.i == b.i && a.j == b.j;
+                             }),
+                pairs.end());
+    return pairs;
 }
 
+// identical to original
 int hybrid_sorted_intersection_size(const std::vector<long long> &v1,
                                     const std::vector<long long> &v2)
 {
-    if (v1.size() < 20 || v2.size() < 20)
-    {
+    if (v1.size() < 20 || v2.size() < 20) {
         int cnt = 0;
         if (v1.size() < v2.size())
             for (auto &x : v1)
@@ -129,13 +129,10 @@ int hybrid_sorted_intersection_size(const std::vector<long long> &v1,
         return cnt;
     }
     int i = 0, j = 0, cnt = 0;
-    while (i < (int)v1.size() && j < (int)v2.size())
-    {
-        if (v1[i] < v2[j])
-            i++;
-        else if (v2[j] < v1[i])
-            j++;
-        else { cnt++; i++; j++; }
+    while (i < (int)v1.size() && j < (int)v2.size()) {
+        if (v1[i] < v2[j]) ++i;
+        else if (v2[j] < v1[i]) ++j;
+        else { ++cnt; ++i; ++j; }
     }
     return cnt;
 }

@@ -8,3 +8,5 @@ util.o
 *.html
 *.fa
 *.log
+*.o
+*.o

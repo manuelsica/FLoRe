@@ -29,4 +29,4 @@ private:
     std::chrono::steady_clock::time_point startTime;
 };
 
-#endif
+#endif // PROFILING_HPP

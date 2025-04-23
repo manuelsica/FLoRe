@@ -13,13 +13,15 @@
 std::vector<std::string> read_fasta(const std::string &filename);
 
 /*
- * read_fasta_buffered: Legge l'intero file FASTA in un buffer per prestazioni migliori.
+ * read_fasta_buffered: Legge un file FASTA in modalità binary, ma in streaming
+ * per prestazioni migliori senza duplicare il buffer completo.
  */
 std::vector<std::string> read_fasta_buffered(const std::string &filename);
 
 /*
- * preprocess_reads: Esegue la pre-elaborazione delle sequenze, rimuovendo spazi e convertendo in uppercase.
+ * preprocess_reads: Esegue la pre-elaborazione delle sequenze, rimuovendo spazi
+ * e convertendo in uppercase.
  */
 std::vector<std::string> preprocess_reads(const std::vector<std::string> &raw_reads);
 
-#endif
+#endif // READ_HPP
