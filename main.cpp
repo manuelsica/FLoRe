@@ -78,8 +78,7 @@ static size_t getMemoryUsageKB()
 #elif defined(__APPLE__)
     mach_task_basic_info info;
     mach_msg_type_number_t infoCount = MACH_TASK_BASIC_INFO_COUNT;
-    kern_return_t kr = task_info(mach_task_self(), MACH_TASK_BASIC_INFO, (task_info_t)&info, &infoCount);
-    if (kr != KERN_SUCCESS)
+    if (task_info(mach_task_self(), MACH_TASK_BASIC_INFO, (task_info_t)&info, &infoCount) != KERN_SUCCESS)
         return 0;
     return info.resident_size / 1024;
 #else
@@ -208,9 +207,11 @@ int main(int argc, char *argv[])
     Profiling profiler;
     profiler.start("Inizio workflow FLoRe");
 
-    // Lettura del file FASTA in modalità buffered
+    // --- 1) Lettura FASTA ---
     async_log("Lettura del file FASTA: " + fasta_file + "\n");
     vector<string> raw_reads = read_fasta_buffered(fasta_file);
+    async_log("MEM_USATA dopo lettura FASTA: " +
+      to_string(getMemoryUsageKB() / 1024.0) + " MB\n");
     if (raw_reads.empty())
     {
         cerr << "Nessuna read trovata nel file FASTA.\n";
@@ -222,12 +223,14 @@ int main(int argc, char *argv[])
     }
     async_log("Numero di read lette: " + to_string(raw_reads.size()) + "\n");
 
-    // Pre-elaborazione: rimozione di spazi e conversione in uppercase
+    // --- 2) Preprocess reads ---
     vector<string> processed_reads = preprocess_reads(raw_reads);
     raw_reads.clear();
     raw_reads.shrink_to_fit();
+    async_log("MEM_USATA dopo preprocess_reads: " +
+      to_string(getMemoryUsageKB() / 1024.0) + " MB\n");
 
-    // Costruisce la struttura ReadData per ogni read
+    // --- 3) Build ReadData ---
     vector<ReadData> all_reads(processed_reads.size());
     unordered_set<unsigned int> solid_fingerprint_set = use_solid_fingerprint
         ? buildSolidFingerprintSet(processed_reads, k, solid_min_freq, solid_max_freq)
@@ -235,26 +238,31 @@ int main(int argc, char *argv[])
     buildAllReadsData(all_reads, processed_reads, k, use_solid_fingerprint, solid_fingerprint_set);
     processed_reads.clear();
     processed_reads.shrink_to_fit();
+    async_log("MEM_USATA dopo buildAllReadsData: " +
+      to_string(getMemoryUsageKB() / 1024.0) + " MB\n");
 
-    // Pre-filtraggio: per ogni ReadData crea set e vettori ordinati dei fingerprint
+    // --- 4) Fill fingerprint sets ---
     fillFingerprintSets(all_reads);
+    async_log("MEM_USATA dopo fillFingerprintSets: " +
+      to_string(getMemoryUsageKB() / 1024.0) + " MB\n");
 
-    // Costruzione degli indici invertiti
+    // --- 5) Costruzione indici + candidate pairs ---
     async_log("Costruzione degli indici invertiti...\n");
     unordered_map<long long, vector<int>> index_fwd, index_rev;
     index_fwd.reserve(all_reads.size() * 4);
     index_rev.reserve(all_reads.size() * 4);
     buildInvertedIndex(all_reads, index_fwd, index_rev);
 
-    // Genera le coppie candidate
     async_log("Generazione delle coppie candidate...\n");
     vector<Pair> candidate_pairs = generateCandidatePairs(index_fwd, index_rev);
+    async_log("MEM_USATA dopo generateCandidatePairs: " +
+      to_string(getMemoryUsageKB() / 1024.0) + " MB\n");
     index_fwd.clear();
     index_rev.clear();
     index_fwd.rehash(0);
     index_rev.rehash(0);
 
-    // Pre-filtraggio: conserva solo le coppie con sufficiente intersezione
+    // --- 6) Pre‐filtraggio coppie ---
     async_log("Pre-filtraggio delle coppie candidate...\n");
     vector<Pair> filtered;
     filtered.reserve(candidate_pairs.size());
@@ -272,12 +280,12 @@ int main(int argc, char *argv[])
     }
     candidate_pairs.clear();
     candidate_pairs.shrink_to_fit();
+    async_log("MEM_USATA dopo filtro coppie: " +
+      to_string(getMemoryUsageKB() / 1024.0) + " MB\n");
     async_log("Coppie candidate dopo filtro: " + to_string(filtered.size()) + "\n");
 
-    // Segna l'inizio dell'elaborazione degli overlap
+    // --- 7) Overlap parallelo ---
     profiler.mark("Inizio elaborazione overlap");
-
-    // Elaborazione in multi-thread delle coppie candidate
     mutex json_mutex;
     vector<JsonResult> json_results;
     json_results.reserve(filtered.size());
@@ -288,103 +296,45 @@ int main(int argc, char *argv[])
         while (true)
         {
             size_t idx = candidateIndex.fetch_add(1);
-            if (idx >= filtered.size())
-                break;
+            if (idx >= filtered.size()) break;
             auto &p = filtered[idx];
 
-            // 1) Overlap “classico”
+            // Overlap classico
             OverlapResult best_ov = compare_candidate_pair(
                 all_reads[p.i], all_reads[p.j],
                 k, min_overlap, verbose, max_repeat_threshold);
-            if (best_ov.overlap_len <= 0)
-                continue;
+            if (best_ov.overlap_len <= 0) continue;
 
-            // 2) Estrazione regioni
-            std::string region_r1 = safe_substr(
+            // Estrazione regioni
+            string region_r1 = safe_substr(
                 best_ov.r1, best_ov.start1, best_ov.end1 - best_ov.start1);
-            std::string region_r2 = safe_substr(
+            string region_r2 = safe_substr(
                 best_ov.r2, best_ov.start2, best_ov.end2 - best_ov.start2);
 
-            // 3) Annotazione minima
-            std::string annotation = get_overlap_annotation(
+            // Annotazione minima
+            string annotation = get_overlap_annotation(
                 region_r1, best_ov.overlap_len,
                 min_overlap, max_repeat_threshold);
 
-            // --- FILTRO A: Low complexity ---
+            // FILTRO A: Low complexity
             if (pseudo_overlap::low_complexity(region_r1) ||
-                pseudo_overlap::low_complexity(region_r2))
-            {
-                if (verbose)
-                {
-                    async_log("-----------------------------------\n");
-                    async_log("Coppia read " + std::to_string(p.i + 1) + " - " + std::to_string(p.j + 1) + "\n");
-                    async_log("Pseudo-overlap scartato: bassa complessità\n");
-                    async_log("Region1: " + region_r1 + "\n");
-                    async_log("Region2: " + region_r2 + "\n");
-                }
-                continue;
-            }
+                pseudo_overlap::low_complexity(region_r2)) continue;
 
-            // --- FILTRO B: FCLA ---
+            // FILTRO B: FCLA
             if (!pseudo_overlap::fingerprint_chained_local_align(
-                region_r1, region_r2,
-                k,      // k-mer length
-                0.80,   // min_identity = 80%
-                k * 2   // max_gap
-            ))
-            {
-                if (verbose)
-                {
-                    async_log("-----------------------------------\n");
-                    async_log("Coppia read " + std::to_string(p.i + 1) + " - " + std::to_string(p.j + 1) + "\n");
-                    async_log("Pseudo-overlap scartato: identità insufficiente (FCLA)\n");
-                }
-                continue;
-            }
+                region_r1, region_r2, k, 0.80, k * 2)) continue;
 
-            // --- FILTRO C: Spectrum similarity ---
-            if (!pseudo_overlap::spectrum_similarity(region_r1, region_r2))
-            {
-                if (verbose)
-                {
-                    async_log("-----------------------------------\n");
-                    async_log("Coppia read " + std::to_string(p.i + 1) + " - " + std::to_string(p.j + 1) + "\n");
-                    async_log("Pseudo-overlap scartato: spectrum divergence alta\n");
-                }
-                continue;
-            }
+            // FILTRO C: Spectrum similarity
+            if (!pseudo_overlap::spectrum_similarity(region_r1, region_r2)) continue;
 
-            // --- FILTRO D: Block entropy consistency ---
+            // FILTRO D: Block entropy consistency
             if (!pseudo_overlap::block_entropy_consistency(region_r1) ||
-                !pseudo_overlap::block_entropy_consistency(region_r2))
-            {
-                if (verbose)
-                {
-                    async_log("-----------------------------------\n");
-                    async_log("Coppia read " + std::to_string(p.i + 1) + " - " + std::to_string(p.j + 1) + "\n");
-                    async_log("Pseudo-overlap scartato: incongruenza entropica a blocchi\n");
-                }
-                continue;
-            }
+                !pseudo_overlap::block_entropy_consistency(region_r2)) continue;
 
-            // --- Se passo tutti i filtri, loggo i dettagli completi ---
-            if (verbose)
+            // Emissione JSON
+            if (annotation.find("SCARTATA") == string::npos)
             {
-                async_log("-----------------------------------\n");
-                async_log("Coppia read " + std::to_string(p.i + 1) + " - " + std::to_string(p.j + 1) + "\n");
-                async_log("Overlap = " + std::to_string(best_ov.overlap_len) + " " + annotation + "\n");
-                async_log("Algoritmo: " + best_ov.used_algorithm + "\n");
-                async_log("Orientazioni: " + best_ov.orientation1 + " - " + best_ov.orientation2 + "\n");
-                async_log("Region r1: " + region_r1 + "\n");
-                async_log("Fingerprint r1: " + best_ov.fingerprint_r1 + "\n");
-                async_log("Region r2: " + region_r2 + "\n");
-                async_log("Fingerprint r2: " + best_ov.fingerprint_r2 + "\n");
-            }
-
-            // --- Emissione JSON finale ---
-            if (annotation.find("SCARTATA") == std::string::npos)
-            {
-                std::ostringstream oss;
+                ostringstream oss;
                 oss << "{"
                     << "\"read1\":" << (p.i + 1) << ","
                     << "\"read2\":" << (p.j + 1) << ","
@@ -403,49 +353,37 @@ int main(int argc, char *argv[])
                     << "\"fingerprint_read2\":\"" << best_ov.fingerprint_r2 << "\","
                     << "\"used_algorithm\":\"" << best_ov.used_algorithm << "\""
                     << "}";
-                std::lock_guard<std::mutex> lk(json_mutex);
-                json_results.emplace_back((int)(p.i + 1), (int)(p.j + 1), oss.str());
+                lock_guard<mutex> lk(json_mutex);
+                json_results.emplace_back(p.i + 1, p.j + 1, oss.str());
             }
         }
     };
 
-    // Avvio del thread pool
     vector<thread> pool;
     pool.reserve(num_threads);
     for (unsigned int th = 0; th < num_threads; ++th)
         pool.emplace_back(worker);
-    for (auto &t : pool)
-        t.join();
+    for (auto &t : pool) t.join();
     filtered.clear();
     filtered.shrink_to_fit();
-
-    // Fine profiling degli overlap
     profiler.mark("Fine elaborazione overlap");
 
+    // --- 8) Salvataggio e fine ---
     auto end_time = chrono::steady_clock::now();
     double total_seconds = chrono::duration<double>(end_time - profiler.start_time()).count();
     size_t mem_kb = getMemoryUsageKB();
 
     async_log("Salvataggio risultati in " + json_filename + "...\n");
     write_sorted_json(json_results, json_filename);
-
-    if (!verbose)
-        async_log("\nTotale overlap scritti: " + to_string(json_results.size()) + "\n");
     async_log("\nTempo totale di esecuzione: " + to_string(total_seconds) + " s\n");
     async_log("Memoria usata (attuale): " + to_string(mem_kb) + " KB\n");
-
     profiler.stop();
 
-    // Termina il thread di logging
+    // Termina logging
     loggingDone.store(true);
     logQueueCV.notify_one();
     loggerThread.join();
-
-    if (logFile.is_open())
-        logFile.close();  // chiusura esplicita, evita che il distruttore provochi doppio close
-
-    all_reads.clear();
-    all_reads.shrink_to_fit();
+    if (logFile.is_open()) logFile.close();
 
     return 0;
 }

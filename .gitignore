@@ -10,3 +10,4 @@ util.o
 *.log
 *.o
 *.o
+*.tmp
