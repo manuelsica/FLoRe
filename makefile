@@ -1,10 +1,11 @@
-# Makefile per compilare il tool FLoRe
+# Makefile per compilare il tool FLoRe con supporto CFL
 # Utilizza g++ con standard C++17, abilitando -Wall e -O3 per ottimizzazione.
-CXX = g++
-CXXFLAGS = -std=c++17 -Wall -O3
 
-# Aggiunta filter.o
-OBJS = main.o logging.o read.o util.o filter.o index.o overlap.o jsonoutput.o profiling.o
+CXX       = g++
+CXXFLAGS  = -std=c++17 -Wall -O3
+
+# Aggiunta cfl.o e filter.o
+OBJS = main.o logging.o read.o util.o cfl.o icfl.o filter.o index.o overlap.o jsonoutput.o profiling.o
 
 all: FLORE_bin set-exec
 
@@ -20,14 +21,19 @@ logging.o: logging.cpp logging.hpp
 read.o: read.cpp read.hpp
 	$(CXX) $(CXXFLAGS) -c read.cpp
 
-util.o: util.cpp util.hpp
+util.o: util.cpp util.hpp cfl.hpp icfl.hpp
 	$(CXX) $(CXXFLAGS) -c util.cpp
 
-# Regola per il nuovo modulo filter
+cfl.o: cfl.cpp cfl.hpp
+	$(CXX) $(CXXFLAGS) -c cfl.cpp
+
+icfl.o: icfl.cpp icfl.hpp
+	$(CXX) $(CXXFLAGS) -c icfl.cpp
+# Regola per il modulo filter
 filter.o: filter.cpp filter.hpp
 	$(CXX) $(CXXFLAGS) -c filter.cpp
 
-index.o: index.cpp index.hpp util.hpp overlap.hpp filter.hpp
+index.o: index.cpp index.hpp util.hpp cfl.hpp icfl.hpp filter.hpp overlap.hpp
 	$(CXX) $(CXXFLAGS) -c index.cpp
 
 overlap.o: overlap.cpp overlap.hpp index.hpp

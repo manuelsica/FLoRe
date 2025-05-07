@@ -30,10 +30,24 @@ struct ProcessedRead {
     CompressedFingerprint comp;
 };
 
-/*
- * encode_kmer_bit: Converte un k-mer in un valore unsigned int usando 2 bit per base.
+/*  processReadCFL:
+ *  calcola il fingerprint, usando la decomposizione CFL;
+ *    k  = lunghezza k-mer
+ *    min_long_factor_len = soglia per considerare “lungo” un fattore
  */
-unsigned int encode_kmer_bit(const std::string &kmer);
+ProcessedRead processReadCFL(const std::string &read,
+    int k,
+    int min_long_factor_len);
+
+ProcessedRead processReadICFL(const std::string &read,
+        int k,
+        int min_long_factor_len);
+
+
+/*  encode_kmer_bit:
+ *      Ritorna true se il k-mer è valido (solo A/C/G/T) e imposta ‹value›;
+ *      altrimenti false e ‹value› è lasciato indeterminato.                */
+bool encode_kmer_bit(const char* kmer, int k, unsigned int &value);
 
 /*
  * reverse_complement: Calcola il reverse complement di una sequenza di DNA.
@@ -88,5 +102,4 @@ buildSolidFingerprintSet(const std::vector<std::string> &reads,
                          int k,
                          int min_freq,
                          int max_freq);
-
 #endif // UTIL_HPP

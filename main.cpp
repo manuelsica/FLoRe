@@ -5,7 +5,7 @@
 // - Lettura del file FASTA
 // - Costruzione della struttura ReadData (calcolo dei fingerprint, reverse complement, ecc.)
 // - Indicizzazione e pre-filtraggio delle coppie candidate
-// - Elaborazione parallela per il calcolo degli overlap tramite FGOE, adaptive_overlap_extension, KHS e core (Combined Overlap Refinement Engine)
+// - Elaborazione parallela per il calcolo degli overlap tramite FGOE, adaptive_overlap_extension, PSH e core (Combined Overlap Refinement Engine)
 // - Profiling e benchmarking (tempo e memoria)
 // - Scrittura dei risultati in formato JSON
 
@@ -37,7 +37,7 @@
 #include "read.hpp"       // Funzioni per la lettura dei file FASTA
 #include "util.hpp"       // Funzioni utilitarie (encoding, reverse complement, ecc.)
 #include "index.hpp"      // Indicizzazione e pre-filtraggio delle coppie candidate
-#include "overlap.hpp"    // Calcolo degli overlap (FGOE, adaptive_overlap_extension, KHS, core, fallback)
+#include "overlap.hpp"    // Calcolo degli overlap (FGOE, adaptive_overlap_extension, PSH, core, fallback)
 #include "jsonoutput.hpp" // Scrittura dei risultati in formato JSON
 #include "profiling.hpp"  // Profiling e benchmarking
 #include "filter.hpp"
@@ -52,15 +52,19 @@ static void print_usage(const char *prog_name)
 {
     cerr << "Usage: " << prog_name << " -f <file_fasta> [options]\n"
          << "  -f, --fasta <file>         File FASTA da processare\n"
-         << "  -m, --min_overlap <int>    Lunghezza minima dell'overlap [default: 13]\n"
-         << "  -r, --max_repeat_threshold <int> Soglia massima per ripetizioni consecutive [default: 10]\n"
-         << "  -k, --kmer <int>           Lunghezza del k-mer [default: 15]\n"
-         << "  -j, --json <file>          File JSON di output [default: results.json]\n"
-         << "  -t, --threads <int>        Numero di thread [default: hardware_concurrency]\n"
-         << "  -v, --verbose              Modalità verbosa (salva log anche in 'verbose.log')\n"
-         << "  --solid_fingerprint        Abilita logica di fingerprint solido\n"
-         << "  --solid_min_freq <int>     Frequenza minima per fingerprint solido [default: 1]\n"
-         << "  --solid_max_freq <int>     Frequenza massima per fingerprint solido [default: 100000]\n"
+         << "  -m, --min_overlap <int>    Lunghezza minima overlap [13]\n"
+         << "  -r, --max_repeat_threshold <int> Soglia max ripetizioni consecutive [10]\n"
+         << "  -k, --kmer <int>           Lunghezza k-mer [15]\n"
+         << "  -j, --json <file>          File JSON di output [results.json]\n"
+         << "  -t, --threads <int>        Numero thread [hw_concurrency]\n"
+         << "  -v, --verbose              Modalità verbosa (log anche su file)\n"
+         << "  --solid_fingerprint        Abilita fingerprint solido\n"
+         << "  --solid_min_freq <int>     Frequenza minima [1]\n"
+         << "  --solid_max_freq <int>     Frequenza massima [100000]\n"
+         << "  --cfl_threshold <int>      Soglia fattori Lyndon lunghi [30]\n"
+         << "  --no_cfl                   Disattiva decomposizione CFL\n"
+         << "  --icfl_threshold <int>     Soglia fattori Lyndon lunghi [30]\n"
+         << "  --icfl                     Abilita decomposizione ICFL\n"
          << "  -h, --help                 Mostra questo messaggio\n";
 }
 
@@ -105,6 +109,10 @@ int main(int argc, char *argv[])
     string json_filename = "results.json";
     unsigned int num_threads = 0;
     bool verbose = false;
+    bool use_cfl = true;
+    int cfl_long_threshold = 30;
+    bool use_icfl = false;
+    int icfl_long_threshold = 30;
 
     // Parametri per il fingerprint solido
     bool use_solid_fingerprint = false;
@@ -123,9 +131,12 @@ int main(int argc, char *argv[])
         {"solid_fingerprint", no_argument, 0, 1000},
         {"solid_min_freq", required_argument, 0, 1001},
         {"solid_max_freq", required_argument, 0, 1002},
+        {"cfl_threshold", required_argument, 0, 1003},
+        {"no_cfl", no_argument, 0, 1004},
+        {"icfl_threshold", required_argument, 0, 1005},
+        {"icfl", no_argument, 0, 1006},
         {"help", no_argument, 0, 'h'},
-        {0, 0, 0, 0}
-    };
+        {0, 0, 0, 0}};
 
     int opt, longindex = 0;
     while ((opt = getopt_long(argc, argv, "f:m:r:k:j:t:vh", longopts, &longindex)) != -1)
@@ -155,12 +166,27 @@ int main(int argc, char *argv[])
             break;
         case 1000:
             use_solid_fingerprint = true;
+            use_cfl = false;
+            use_icfl = false;
             break;
         case 1001:
             solid_min_freq = atoi(optarg);
             break;
         case 1002:
             solid_max_freq = atoi(optarg);
+            break;
+        case 1003:
+            cfl_long_threshold = atoi(optarg);
+            break;
+        case 1004:
+            use_cfl = false;
+            break;
+        case 1005: // --icfl_threshold
+            icfl_long_threshold = atoi(optarg);
+            break;
+        case 1006: // --icfl
+            use_icfl = true;
+            use_cfl = false; // disattiva automaticamente la CFL
             break;
         case 'h':
             print_usage(argv[0]);
@@ -206,12 +232,23 @@ int main(int argc, char *argv[])
     // Avvio del profiling per misurare le performance
     Profiling profiler;
     profiler.start("Inizio workflow FLoRe");
-
+    if (use_cfl)
+    {
+        async_log("CFL attiva – threshold = " + to_string(cfl_long_threshold) + "\n");
+    }
+    else if (use_icfl)
+    {
+        async_log("ICFL attiva – threshold = " + to_string(cfl_long_threshold) + "\n");
+    }
+    else
+    {
+        async_log("CFL/ICFL disattivata – fingerprint classico\n");
+    }
     // --- 1) Lettura FASTA ---
     async_log("Lettura del file FASTA: " + fasta_file + "\n");
     vector<string> raw_reads = read_fasta_buffered(fasta_file);
     async_log("MEM_USATA dopo lettura FASTA: " +
-      to_string(getMemoryUsageKB() / 1024.0) + " MB\n");
+              to_string(getMemoryUsageKB() / 1024.0) + " MB\n");
     if (raw_reads.empty())
     {
         cerr << "Nessuna read trovata nel file FASTA.\n";
@@ -228,23 +265,25 @@ int main(int argc, char *argv[])
     raw_reads.clear();
     raw_reads.shrink_to_fit();
     async_log("MEM_USATA dopo preprocess_reads: " +
-      to_string(getMemoryUsageKB() / 1024.0) + " MB\n");
+              to_string(getMemoryUsageKB() / 1024.0) + " MB\n");
 
     // --- 3) Build ReadData ---
     vector<ReadData> all_reads(processed_reads.size());
     unordered_set<unsigned int> solid_fingerprint_set = use_solid_fingerprint
-        ? buildSolidFingerprintSet(processed_reads, k, solid_min_freq, solid_max_freq)
-        : unordered_set<unsigned int>();
-    buildAllReadsData(all_reads, processed_reads, k, use_solid_fingerprint, solid_fingerprint_set);
+                                                            ? buildSolidFingerprintSet(processed_reads, k, solid_min_freq, solid_max_freq)
+                                                            : unordered_set<unsigned int>();
+    buildAllReadsData(all_reads, processed_reads, k,
+                      use_solid_fingerprint, solid_fingerprint_set,
+                      use_cfl, cfl_long_threshold, use_icfl, icfl_long_threshold);
     processed_reads.clear();
     processed_reads.shrink_to_fit();
     async_log("MEM_USATA dopo buildAllReadsData: " +
-      to_string(getMemoryUsageKB() / 1024.0) + " MB\n");
+              to_string(getMemoryUsageKB() / 1024.0) + " MB\n");
 
     // --- 4) Fill fingerprint sets ---
     fillFingerprintSets(all_reads);
     async_log("MEM_USATA dopo fillFingerprintSets: " +
-      to_string(getMemoryUsageKB() / 1024.0) + " MB\n");
+              to_string(getMemoryUsageKB() / 1024.0) + " MB\n");
 
     // --- 5) Costruzione indici + candidate pairs ---
     async_log("Costruzione degli indici invertiti...\n");
@@ -256,7 +295,7 @@ int main(int argc, char *argv[])
     async_log("Generazione delle coppie candidate...\n");
     vector<Pair> candidate_pairs = generateCandidatePairs(index_fwd, index_rev);
     async_log("MEM_USATA dopo generateCandidatePairs: " +
-      to_string(getMemoryUsageKB() / 1024.0) + " MB\n");
+              to_string(getMemoryUsageKB() / 1024.0) + " MB\n");
     index_fwd.clear();
     index_rev.clear();
     index_fwd.rehash(0);
@@ -281,7 +320,7 @@ int main(int argc, char *argv[])
     candidate_pairs.clear();
     candidate_pairs.shrink_to_fit();
     async_log("MEM_USATA dopo filtro coppie: " +
-      to_string(getMemoryUsageKB() / 1024.0) + " MB\n");
+              to_string(getMemoryUsageKB() / 1024.0) + " MB\n");
     async_log("Coppie candidate dopo filtro: " + to_string(filtered.size()) + "\n");
 
     // --- 7) Overlap parallelo ---
@@ -296,14 +335,16 @@ int main(int argc, char *argv[])
         while (true)
         {
             size_t idx = candidateIndex.fetch_add(1);
-            if (idx >= filtered.size()) break;
+            if (idx >= filtered.size())
+                break;
             auto &p = filtered[idx];
 
             // Overlap classico
             OverlapResult best_ov = compare_candidate_pair(
                 all_reads[p.i], all_reads[p.j],
                 k, min_overlap, verbose, max_repeat_threshold);
-            if (best_ov.overlap_len <= 0) continue;
+            if (best_ov.overlap_len <= 0)
+                continue;
 
             // Estrazione regioni
             string region_r1 = safe_substr(
@@ -318,19 +359,69 @@ int main(int argc, char *argv[])
 
             // FILTRO A: Low complexity
             if (pseudo_overlap::low_complexity(region_r1) ||
-                pseudo_overlap::low_complexity(region_r2)) continue;
+                pseudo_overlap::low_complexity(region_r2))
+            {
+
+                if (verbose)
+                {
+                    async_log("-----------------------------------\n");
+                    async_log("Coppia read " + to_string(p.i + 1) + " - " + to_string(p.j + 1) + "\n");
+                    async_log("Pseudo-overlap scartato: bassa complessità\n");
+                    async_log("Region1: " + region_r1 + "\n");
+                    async_log("Region2: " + region_r2 + "\n");
+                }
+                continue;
+            }
 
             // FILTRO B: FCLA
             if (!pseudo_overlap::fingerprint_chained_local_align(
-                region_r1, region_r2, k, 0.80, k * 2)) continue;
+                    region_r1, region_r2, k, 0.80, k * 2))
+            {
+                if (verbose)
+                {
+                    async_log("-----------------------------------\n");
+                    async_log("Coppia read " + to_string(p.i + 1) + " - " + to_string(p.j + 1) + "\n");
+                    async_log("Pseudo-overlap scartato: identità insufficiente (FCLA)\n");
+                }
+                continue;
+            }
 
             // FILTRO C: Spectrum similarity
-            if (!pseudo_overlap::spectrum_similarity(region_r1, region_r2)) continue;
+            if (!pseudo_overlap::spectrum_similarity(region_r1, region_r2))
+            {
+                if (verbose)
+                {
+                    async_log("-----------------------------------\n");
+                    async_log("Coppia read " + to_string(p.i + 1) + " - " + to_string(p.j + 1) + "\n");
+                    async_log("Pseudo-overlap scartato: spectrum divergence alta\n");
+                }
+                continue;
+            }
 
             // FILTRO D: Block entropy consistency
             if (!pseudo_overlap::block_entropy_consistency(region_r1) ||
-                !pseudo_overlap::block_entropy_consistency(region_r2)) continue;
-
+                !pseudo_overlap::block_entropy_consistency(region_r2))
+            {
+                if (verbose)
+                {
+                    async_log("-----------------------------------\n");
+                    async_log("Coppia read " + to_string(p.i + 1) + " - " + to_string(p.j + 1) + "\n");
+                    async_log("Pseudo-overlap scartato: incongruenza entropica a blocchi\n");
+                }
+                continue;
+            }
+            if (verbose)
+            {
+                async_log("-----------------------------------\n");
+                async_log("Coppia read " + to_string(p.i + 1) + " - " + to_string(p.j + 1) + "\n");
+                async_log("Overlap = " + to_string(best_ov.overlap_len) + " " + annotation + "\n");
+                async_log("Algoritmo: " + best_ov.used_algorithm + "\n");
+                async_log("Orientazioni: " + best_ov.orientation1 + " - " + best_ov.orientation2 + "\n");
+                async_log("Region r1: " + region_r1 + "\n");
+                async_log("Fingerprint r1: " + best_ov.fingerprint_r1 + "\n");
+                async_log("Region r2: " + region_r2 + "\n");
+                async_log("Fingerprint r2: " + best_ov.fingerprint_r2 + "\n");
+            }
             // Emissione JSON
             if (annotation.find("SCARTATA") == string::npos)
             {
@@ -352,9 +443,16 @@ int main(int argc, char *argv[])
                     << "\"overlap_region_read2\":\"" << region_r2 << "\","
                     << "\"fingerprint_read2\":\"" << best_ov.fingerprint_r2 << "\","
                     << "\"used_algorithm\":\"" << best_ov.used_algorithm << "\""
-                    << "}";
+                    // debug fields for fingerprint mode and marker
+                    << ",\"fp_type\":\""
+                       << (use_icfl               ? "ICFL"
+                         : use_cfl               ? "CFL"
+                         : use_solid_fingerprint ? "SOLID"
+                         :                         "CLASSIC")
+                    << "\"}";
                 lock_guard<mutex> lk(json_mutex);
                 json_results.emplace_back(p.i + 1, p.j + 1, oss.str());
+
             }
         }
     };
@@ -363,10 +461,45 @@ int main(int argc, char *argv[])
     pool.reserve(num_threads);
     for (unsigned int th = 0; th < num_threads; ++th)
         pool.emplace_back(worker);
-    for (auto &t : pool) t.join();
+    for (auto &t : pool)
+        t.join();
     filtered.clear();
     filtered.shrink_to_fit();
     profiler.mark("Fine elaborazione overlap");
+    size_t total_overlaps = json_results.size();
+    async_log("Totale overlap trovati: " + std::to_string(total_overlaps) + "\n");
+       // ── INIZIO BLOCCO FASTA ──────────────────────────────────────────────
+       {
+        // Raccogli tutti gli indici di read coinvolte in un overlap
+        std::unordered_set<int> overlap_reads;
+        for (auto &jr : json_results) {
+            overlap_reads.insert(jr.read1 - 1);
+            overlap_reads.insert(jr.read2 - 1);
+        }
+        // Funzione di utilità per serializzare la fingerprint
+        auto dump_fp = [&](const std::vector<unsigned int>& fp){
+            std::ostringstream os;
+            for (size_t j = 0; j < fp.size(); ++j) {
+                os << fp[j];
+                if (j + 1 < fp.size()) os << '-';
+            }
+            return os.str();
+        };
+        // Apri il “FASTA” di output con le fingerprint
+        std::ofstream fa_out("overlap_reads.fa");
+        if (fa_out) {
+            for (int i : overlap_reads) {
+                fa_out << ">read" << (i+1) << "_fp_forward\n"
+                       << dump_fp(all_reads[i].pr_fwd.comp.comp_fp) << "\n"
+                       << ">read" << (i+1) << "_fp_reverse\n"
+                       << dump_fp(all_reads[i].pr_rev.comp.comp_fp) << "\n";
+            }
+            fa_out.close();
+            async_log("Salvate " + std::to_string(overlap_reads.size())
+                      + " fingerprint (forward+reverse) in overlap_reads.fa\n");
+        }
+    }
+    // ── FINE BLOCCO FASTA ────────────────────────────────────────────────
 
     // --- 8) Salvataggio e fine ---
     auto end_time = chrono::steady_clock::now();
@@ -383,7 +516,8 @@ int main(int argc, char *argv[])
     loggingDone.store(true);
     logQueueCV.notify_one();
     loggerThread.join();
-    if (logFile.is_open()) logFile.close();
+    if (logFile.is_open())
+        logFile.close();
 
     return 0;
 }

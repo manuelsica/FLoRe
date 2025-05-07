@@ -1,28 +1,57 @@
 // index.cpp
 #include "index.hpp"
 #include <algorithm>
+#include "util.hpp" 
+#include "cfl.hpp"
+#include "icfl.hpp"
+#include <cassert>
 
-// buildAllReadsData e fillFingerprintSets rimangono invariati:
-void buildAllReadsData(std::vector<ReadData> &all_reads,
-                       const std::vector<std::string> &reads,
-                       int k,
-                       bool use_solid_fingerprint,
-                       const std::unordered_set<unsigned int> &solid_fingerprint_set)
+void buildAllReadsData(std::vector<ReadData>               &all_reads,
+                       const std::vector<std::string>      &reads,
+                       int                                  k,
+                       bool                                 use_solid_fp,
+                       const std::unordered_set<unsigned int> &solid_set,
+                       bool                                 use_cfl,
+                       int                                  cfl_thr,
+                       bool                                 use_icfl,
+                       int                                  icfl_thr)
 {
-    for (size_t i = 0; i < all_reads.size(); i++)
+    assert(all_reads.size() == reads.size());
+
+    for (size_t i = 0; i < reads.size(); ++i)
     {
-        all_reads[i].forward    = reads[i];
-        all_reads[i].reverse_seq = reverse_complement(reads[i]);
-        if (use_solid_fingerprint)
-        {
-            all_reads[i].pr_fwd = processReadSolidFingerprint(all_reads[i].forward, k, solid_fingerprint_set);
-            all_reads[i].pr_rev = processReadSolidFingerprint(all_reads[i].reverse_seq, k, solid_fingerprint_set);
+        ReadData &rd = all_reads[i];
+
+        /* ----------------------------------------------------------------- */
+        /* 1) sequenze forward / reverse                                     */
+        rd.forward      = reads[i];
+        rd.reverse_seq  = reverse_complement(reads[i]);
+
+        /* ----------------------------------------------------------------- */
+        /* 2) fingerprint forward                                            */
+        if (use_icfl) {
+            rd.pr_fwd = processReadICFL(rd.forward, k, icfl_thr);
+            rd.pr_rev = processReadICFL(rd.reverse_seq, k, icfl_thr);
         }
-        else
-        {
-            all_reads[i].pr_fwd = processReadFingerprint(all_reads[i].forward, k);
-            all_reads[i].pr_rev = processReadFingerprint(all_reads[i].reverse_seq, k);
+        else if (use_cfl) {
+            rd.pr_fwd = processReadCFL(rd.forward, k, cfl_thr);
+            rd.pr_rev = processReadCFL(rd.reverse_seq, k, cfl_thr);
         }
+        else if (use_solid_fp) {
+            rd.pr_fwd = processReadSolidFingerprint(rd.forward,     k, solid_set);
+            rd.pr_rev = processReadSolidFingerprint(rd.reverse_seq, k, solid_set);
+        }
+        else {
+            rd.pr_fwd = processReadFingerprint(rd.forward,     k);
+            rd.pr_rev = processReadFingerprint(rd.reverse_seq, k);
+        }
+
+        /* ----------------------------------------------------------------- */
+        /* 3) primo fingerprint compresso  (Compatibility Property filter)   */
+        rd.first_fp_fwd = rd.pr_fwd.comp.comp_fp.empty() ? 0
+                            : rd.pr_fwd.comp.comp_fp.front();
+        rd.first_fp_rev = rd.pr_rev.comp.comp_fp.empty() ? 0
+                            : rd.pr_rev.comp.comp_fp.front();
     }
 }
 
