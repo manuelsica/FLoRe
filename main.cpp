@@ -41,7 +41,9 @@
 #include "jsonoutput.hpp" // Scrittura dei risultati in formato JSON
 #include "profiling.hpp"  // Profiling e benchmarking
 #include "filter.hpp"
-
+#include "cfl.hpp"
+#include "icfl.hpp"
+#include "cfl_icfl.hpp"
 using namespace std;
 
 /*
@@ -65,8 +67,61 @@ static void print_usage(const char *prog_name)
          << "  --no_cfl                   Disattiva decomposizione CFL\n"
          << "  --icfl_threshold <int>     Soglia fattori Lyndon lunghi [30]\n"
          << "  --icfl                     Abilita decomposizione ICFL\n"
+         << "  --cfl_icfl_threshold <int> Soglia fattori CFL per subdecomposizione ICFL [30]\n"
+         << "  --cfl_icfl                 Abilita decomposizione CFL+ICFL\n"
          << "  -h, --help                 Mostra questo messaggio\n";
 }
+
+/* ------------------------------------------------------------------------- */
+/* print_config:
+ * Riassume tutte le opzioni effettivamente in uso.
+ * Va richiamata dopo il parsing degli argomenti.
+ */
+static void print_config(const std::string &fasta_file,
+    int  min_overlap,
+    int  max_repeat_threshold,
+    int  k,
+    const std::string &json_filename,
+    unsigned int num_threads,
+    bool verbose,
+    bool use_solid_fingerprint,
+    int  solid_min_freq,
+    int  solid_max_freq,
+    bool use_cfl,
+    int  cfl_long_threshold,
+    bool use_icfl,
+    int  icfl_long_threshold,
+    bool use_cflicfl,
+    int  cflicfl_long_threshold)
+{
+auto onoff = [](bool b) { return b ? "ON" : "OFF"; };
+std::ostringstream cfg;
+
+cfg << "\n================= CONFIG SUMMARY =================\n"
+<< "FASTA file              : " << fasta_file                << '\n'
+<< "JSON output             : " << json_filename             << '\n'
+<< "Threads                 : " << num_threads               << '\n'
+<< "Verbose                 : " << onoff(verbose)            << '\n'
+<< "--------------------------------------------------\n"
+<< "k‑mer length            : " << k                         << '\n'
+<< "min_overlap             : " << min_overlap               << '\n'
+<< "max_repeat_threshold    : " << max_repeat_threshold      << '\n'
+<< "--------------------------------------------------\n"
+<< "Solid fingerprint       : " << onoff(use_solid_fingerprint) << '\n'
+<< "  ├─ min_freq           : " << solid_min_freq            << '\n'
+<< "  └─ max_freq           : " << solid_max_freq            << '\n'
+<< "CFL                     : " << onoff(use_cfl)            << '\n'
+<< "  └─ long_threshold     : " << cfl_long_threshold        << '\n'
+<< "ICFL                    : " << onoff(use_icfl)           << '\n'
+<< "  └─ long_threshold     : " << icfl_long_threshold       << '\n'
+<< "CFL→ICFL                : " << onoff(use_cflicfl)        << '\n'
+<< "  └─ long_threshold     : " << cflicfl_long_threshold    << '\n'
+<< "==================================================\n";
+
+async_log(cfg.str());
+}
+/* ------------------------------------------------------------------------- */
+
 
 /*
  * getMemoryUsageKB:
@@ -109,9 +164,11 @@ int main(int argc, char *argv[])
     string json_filename = "results.json";
     unsigned int num_threads = 0;
     bool verbose = false;
-    bool use_cfl = true;
+    bool use_cfl = false;
     int cfl_long_threshold = 30;
     bool use_icfl = false;
+    bool use_cflicfl = false;
+    int cflicfl_long_threshold = 30;
     int icfl_long_threshold = 30;
 
     // Parametri per il fingerprint solido
@@ -135,6 +192,8 @@ int main(int argc, char *argv[])
         {"no_cfl", no_argument, 0, 1004},
         {"icfl_threshold", required_argument, 0, 1005},
         {"icfl", no_argument, 0, 1006},
+        {"cfl_icfl", no_argument, 0, 1007},
+        {"cfl_icfl_threshold", required_argument, 0, 1008},
         {"help", no_argument, 0, 'h'},
         {0, 0, 0, 0}};
 
@@ -177,9 +236,12 @@ int main(int argc, char *argv[])
             break;
         case 1003:
             cfl_long_threshold = atoi(optarg);
+            use_cfl = true;
             break;
         case 1004:
             use_cfl = false;
+            use_cflicfl = false;
+            use_icfl = false;
             break;
         case 1005: // --icfl_threshold
             icfl_long_threshold = atoi(optarg);
@@ -187,6 +249,15 @@ int main(int argc, char *argv[])
         case 1006: // --icfl
             use_icfl = true;
             use_cfl = false; // disattiva automaticamente la CFL
+            use_cflicfl = false;
+            break;
+        case 1007: // --cflicfl
+            use_cflicfl = true;
+            use_cfl = false;
+            use_icfl = false;
+            break;
+        case 1008: // --cflicfl_threshold
+            cflicfl_long_threshold = atoi(optarg);
             break;
         case 'h':
             print_usage(argv[0]);
@@ -218,6 +289,11 @@ int main(int argc, char *argv[])
             num_threads = 2;
     }
 
+    print_config(fasta_file, min_overlap, max_repeat_threshold, k,
+        json_filename, num_threads, verbose,
+        use_solid_fingerprint, solid_min_freq, solid_max_freq,
+        use_cfl, cfl_long_threshold, use_icfl, icfl_long_threshold,
+        use_cflicfl, cflicfl_long_threshold);
     // Se l'opzione verbose è attiva, abilita il logging su file
     if (verbose)
     {
@@ -238,7 +314,11 @@ int main(int argc, char *argv[])
     }
     else if (use_icfl)
     {
-        async_log("ICFL attiva – threshold = " + to_string(cfl_long_threshold) + "\n");
+        async_log("ICFL attiva – threshold = " + to_string(icfl_long_threshold) + "\n");
+    }
+    else if (use_cflicfl)
+    {
+        async_log("CFL→ICFL attiva – threshold = " + to_string(cflicfl_long_threshold) + "\n");
     }
     else
     {
@@ -266,6 +346,39 @@ int main(int argc, char *argv[])
     raw_reads.shrink_to_fit();
     async_log("MEM_USATA dopo preprocess_reads: " +
               to_string(getMemoryUsageKB() / 1024.0) + " MB\n");
+    // --- 2.1) Calcolo lunghezza massima fattori Lyndon di tutti gli algoritmi ---
+    // --- 2.1) Calcolo lunghezza massima fattori Lyndon ---
+    size_t max_factor = 0;
+    if (use_cfl)
+    {
+        for (auto &r : processed_reads)
+        {
+            auto fac = cfl_factors(r);
+            for (auto &f : fac)
+                max_factor = max(max_factor, f.size());
+        }
+        async_log("Massimo fattore CFL      : " + to_string(max_factor) + "\n");
+    }
+    else if (use_icfl)
+    {
+        for (auto &r : processed_reads)
+        {
+            auto fac = icfl_factors(r);
+            for (auto &f : fac)
+                max_factor = max(max_factor, f.size());
+        }
+        async_log("Massimo fattore ICFL     : " + to_string(max_factor) + "\n");
+    }
+    else if (use_cflicfl)
+    {
+        for (auto &r : processed_reads)
+        {
+            auto fac = cfl_icfl(r, cflicfl_long_threshold);
+            for (auto &f : fac)
+                max_factor = max(max_factor, f.size());
+        }
+        async_log("Massimo fattore CFL→ICFL : " + to_string(max_factor) + "\n");
+    }
 
     // --- 3) Build ReadData ---
     vector<ReadData> all_reads(processed_reads.size());
@@ -274,7 +387,7 @@ int main(int argc, char *argv[])
                                                             : unordered_set<unsigned int>();
     buildAllReadsData(all_reads, processed_reads, k,
                       use_solid_fingerprint, solid_fingerprint_set,
-                      use_cfl, cfl_long_threshold, use_icfl, icfl_long_threshold);
+                      use_cfl, cfl_long_threshold, use_icfl, icfl_long_threshold, use_cflicfl, cflicfl_long_threshold);
     processed_reads.clear();
     processed_reads.shrink_to_fit();
     async_log("MEM_USATA dopo buildAllReadsData: " +
@@ -445,14 +558,14 @@ int main(int argc, char *argv[])
                     << "\"used_algorithm\":\"" << best_ov.used_algorithm << "\""
                     // debug fields for fingerprint mode and marker
                     << ",\"fp_type\":\""
-                       << (use_icfl               ? "ICFL"
-                         : use_cfl               ? "CFL"
-                         : use_solid_fingerprint ? "SOLID"
-                         :                         "CLASSIC")
+                    << (use_icfl                ? "ICFL"
+                        : use_cfl               ? "CFL"
+                        : use_solid_fingerprint ? "SOLID"
+                        : use_cflicfl           ? "CFL_ICFL"
+                                                : "CLASSIC")
                     << "\"}";
                 lock_guard<mutex> lk(json_mutex);
                 json_results.emplace_back(p.i + 1, p.j + 1, oss.str());
-
             }
         }
     };
@@ -468,35 +581,40 @@ int main(int argc, char *argv[])
     profiler.mark("Fine elaborazione overlap");
     size_t total_overlaps = json_results.size();
     async_log("Totale overlap trovati: " + std::to_string(total_overlaps) + "\n");
-       // ── INIZIO BLOCCO FASTA ──────────────────────────────────────────────
-       {
+    // ── INIZIO BLOCCO FASTA ──────────────────────────────────────────────
+    {
         // Raccogli tutti gli indici di read coinvolte in un overlap
         std::unordered_set<int> overlap_reads;
-        for (auto &jr : json_results) {
+        for (auto &jr : json_results)
+        {
             overlap_reads.insert(jr.read1 - 1);
             overlap_reads.insert(jr.read2 - 1);
         }
         // Funzione di utilità per serializzare la fingerprint
-        auto dump_fp = [&](const std::vector<unsigned int>& fp){
+        auto dump_fp = [&](const std::vector<unsigned int> &fp)
+        {
             std::ostringstream os;
-            for (size_t j = 0; j < fp.size(); ++j) {
+            for (size_t j = 0; j < fp.size(); ++j)
+            {
                 os << fp[j];
-                if (j + 1 < fp.size()) os << '-';
+                if (j + 1 < fp.size())
+                    os << '-';
             }
             return os.str();
         };
         // Apri il “FASTA” di output con le fingerprint
         std::ofstream fa_out("overlap_reads.fa");
-        if (fa_out) {
-            for (int i : overlap_reads) {
-                fa_out << ">read" << (i+1) << "_fp_forward\n"
+        if (fa_out)
+        {
+            for (int i : overlap_reads)
+            {
+                fa_out << ">read" << (i + 1) << "_fp_forward\n"
                        << dump_fp(all_reads[i].pr_fwd.comp.comp_fp) << "\n"
-                       << ">read" << (i+1) << "_fp_reverse\n"
+                       << ">read" << (i + 1) << "_fp_reverse\n"
                        << dump_fp(all_reads[i].pr_rev.comp.comp_fp) << "\n";
             }
             fa_out.close();
-            async_log("Salvate " + std::to_string(overlap_reads.size())
-                      + " fingerprint (forward+reverse) in overlap_reads.fa\n");
+            async_log("Salvate " + std::to_string(overlap_reads.size()) + " fingerprint (forward+reverse) in overlap_reads.fa\n");
         }
     }
     // ── FINE BLOCCO FASTA ────────────────────────────────────────────────

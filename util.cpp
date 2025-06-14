@@ -11,8 +11,10 @@
 #include <string>
 #include "cfl.hpp"
 #include "icfl.hpp"
+#include "cfl_icfl.hpp"
 #include <climits> // CHAR_BIT
 #include <cctype>
+#include <functional>
 
 bool encode_kmer_bit(const char *kmer, int k, unsigned int &value)
 {
@@ -527,5 +529,41 @@ ProcessedRead processReadICFL(const std::string &read,
     /* pr.comp.comp_fp.insert(pr.comp.comp_fp.begin(), 0xFFFFFFFFu);
     pr.comp.comp_indices.insert(pr.comp.comp_indices.begin(), -1);
  */
+    return pr;
+}
+
+ProcessedRead processReadCFLICFL(const std::string &read,
+                                 int k,
+                                 int cfl_icfl_threshold)
+{
+    ProcessedRead pr;
+    // 1) decomposizione CFL→ICFL con soglia cfl_icfl_threshold
+    auto fac = cfl_icfl(read, cfl_icfl_threshold);
+
+    // 2) prepariamo i container per fingerprint e indici
+    std::vector<unsigned int> fp;
+    std::vector<int> idx;
+    fp.reserve(read.size());
+    idx.reserve(read.size());
+
+    int globalPos = 0;
+    // 3) per ogni fattore applichiamo processReadFingerprint e aggiustiamo gli indici
+    for (auto const &f : fac)
+    {
+        // f è std::string_view su read
+        ProcessedRead tmp = processReadFingerprint(std::string(f), k);
+        for (size_t t = 0; t < tmp.comp.comp_fp.size(); ++t)
+        {
+            fp.push_back(tmp.comp.comp_fp[t]);
+            idx.push_back(tmp.comp.comp_indices[t] + globalPos);
+        }
+        globalPos += static_cast<int>(f.size());
+    }
+
+    // 4) assembliamo il risultato
+    pr.comp.comp_fp = std::move(fp);
+    pr.comp.comp_indices = std::move(idx);
+    pr.comp.comp_kmers.clear(); // non ci servono i k-mer qui
+
     return pr;
 }

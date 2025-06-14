@@ -34,15 +34,17 @@ struct ReadData {
 };
 
 // ↓ funzioni – firme invariate
-void buildAllReadsData(std::vector<ReadData> &all_reads,
-    const std::vector<std::string> &reads,
-    int k,
-    bool use_solid_fp,
+void buildAllReadsData(std::vector<ReadData>               &all_reads,
+    const std::vector<std::string>      &reads,
+    int                                  k,
+    bool                                 use_solid_fp,
     const std::unordered_set<unsigned int> &solid_set,
-    bool use_cfl,
-    int  cfl_thr,
-    bool use_icfl,
-    int  icfl_thr);
+    bool                                 use_cfl,
+    int                                  cfl_thr,
+    bool                                 use_cfl_icfl,
+    int                                  cfl_icfl_thr,
+    bool                                 use_icfl,
+    int                                  icfl_thr);
 
 
 void fillFingerprintSets(std::vector<ReadData>&);

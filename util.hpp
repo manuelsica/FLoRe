@@ -30,6 +30,8 @@ struct ProcessedRead {
     CompressedFingerprint comp;
 };
 
+
+
 /*  processReadCFL:
  *  calcola il fingerprint, usando la decomposizione CFL;
  *    k  = lunghezza k-mer
@@ -43,6 +45,9 @@ ProcessedRead processReadICFL(const std::string &read,
         int k,
         int min_long_factor_len);
 
+ProcessedRead processReadCFLICFL(const std::string &read,
+            int k,
+            int cfl_icfl_threshold);
 
 /*  encode_kmer_bit:
  *      Ritorna true se il k-mer è valido (solo A/C/G/T) e imposta ‹value›;

@@ -3,9 +3,7 @@
 
 CXX       = g++
 CXXFLAGS  = -std=c++17 -Wall -O3
-
-# Aggiunta cfl.o e filter.o
-OBJS = main.o logging.o read.o util.o cfl.o icfl.o filter.o index.o overlap.o jsonoutput.o profiling.o
+OBJS = main.o logging.o read.o util.o cfl.o icfl.o cfl_icfl.o filter.o index.o overlap.o jsonoutput.o profiling.o
 
 all: FLORE_bin set-exec
 
@@ -21,7 +19,7 @@ logging.o: logging.cpp logging.hpp
 read.o: read.cpp read.hpp
 	$(CXX) $(CXXFLAGS) -c read.cpp
 
-util.o: util.cpp util.hpp cfl.hpp icfl.hpp
+util.o: util.cpp util.hpp cfl.hpp icfl.hpp cfl_icfl.hpp
 	$(CXX) $(CXXFLAGS) -c util.cpp
 
 cfl.o: cfl.cpp cfl.hpp
@@ -29,6 +27,11 @@ cfl.o: cfl.cpp cfl.hpp
 
 icfl.o: icfl.cpp icfl.hpp
 	$(CXX) $(CXXFLAGS) -c icfl.cpp
+
+# nuovo modulo CFL→ICFL
+cfl_icfl.o: cfl_icfl.cpp cfl_icfl.hpp cfl.hpp icfl.hpp
+	$(CXX) $(CXXFLAGS) -c cfl_icfl.cpp
+
 # Regola per il modulo filter
 filter.o: filter.cpp filter.hpp
 	$(CXX) $(CXXFLAGS) -c filter.cpp
