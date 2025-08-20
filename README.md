@@ -62,15 +62,12 @@ Each verified overlap is then output in a structured format (see Usage below). F
 ## Installation and Requirements
 
 **Language and Standards:** FLoRe is written in C++ (C++17 standard) for high performance. You will need a C++17-compatible compiler such as g++ or clang++ to build it  
-GitHub  
 The code has been tested primarily on Linux (e.g., Ubuntu) and macOS. It uses the C++ Standard Library threads for parallelism and OS-specific calls for memory usage statistics. Windows support is partially included (there are code paths for Windows memory profiling  
-GitHub  
 ), but building on Windows may require a POSIX compatibility layer or using WSL (Windows Subsystem for Linux) because the code uses POSIX APIs like <getopt.h> for command-line parsing.
 
 **Prerequisites:** No external libraries are required for core functionality – the implementation relies only on the standard C++ library (threads, data structures, etc.). For convenience, a Python 3 installation is recommended if you wish to use the automated JSON-to-Excel conversion (pandas and openpyxl will be used by the script, but they are installed on-the-fly if missing). Python is not required to find overlaps, only for formatting results into Excel.
 
 **Supported Platforms:** The tool is developed and tested on 64-bit Linux and should compile on macOS as well (it includes macOS-specific memory queries via Mach APIs  
-GitHub  
 ). On Windows, compilation with MinGW or MSYS2 may work, but due to the use of Unix-specific functions, the simplest method is to compile and run FLoRe under WSL or a Linux container.
 
 ## Building from Source
@@ -113,23 +110,17 @@ will process the reads from reads.fasta using k=15, employ 8 threads, and save t
 
 - **-f, --fasta <file> (required):** Input file in FASTA format containing the reads to process. Each read in the FASTA should have a unique identifier. (Multi-FASTA with many reads is supported.)
 - **-k, --kmer <int>:** k-mer length to use for fingerprinting. Default is 15  
-GitHub  
 Shorter k-mers increase sensitivity (more potential overlaps found) at the cost of more candidates and possibly more false hits; longer k-mers make the fingerprints more specific. Typically 15-19 is a reasonable range for PacBio/ONT reads.
-- **-m, --min_overlap <int>:** Minimum overlap length (in base pairs) to report. Default is 13 bp  
-GitHub  
+- **-m, --min_overlap <int>:** Minimum overlap length (in base pairs) to report. Default is 13 bp    
 Overlaps shorter than this threshold will be ignored. You might raise this for very long reads to avoid trivial overlaps.
 - **-r, --max_repeat_threshold <int>:** Maximum allowed run-length for a single fingerprint ID. Default 10  
-GitHub  
 This is essentially a filter for reads with very long homopolymers or low complexity – if a fingerprint value repeats more than this many times in a row in a read, FLoRe might break the fingerprint or flag it (to avoid overly repetitive candidate matches). In most cases the default is fine.
 - **-t, --threads <int>:** Number of parallel threads to use. By default, FLoRe uses all available hardware threads (as reported by the system)  
-GitHub  
 You can cap this to avoid using all CPU cores. Multi-threading greatly speeds up Stage 3 (overlap validation), as different read pairs can be processed concurrently.
 - **-j, --json <file>:** Output filename for the JSON results. Default is results.json  
-GitHub  
 You can specify a path to direct the overlap output to a particular location. The JSON will contain an array of overlap records (described below). If you use the wrapper script, it will also attempt to create an Excel (.xlsx) version of this file automatically.
 - **-v, --verbose:** Enable verbose logging. By default, FLoRe prints minimal info to the console. With -v, it will log progress and debug information (and also save a detailed log to a file). This can help in understanding how many candidates were filtered, how many overlaps each method found, etc., but may slow down execution slightly due to I/O.
 - **--solid_fingerprint:** Enable “solid” fingerprint mode. In this mode, FLoRe will ignore extremely rare or extremely frequent k-mers when building fingerprints. Specifically, you can set --solid_min_freq <n> and --solid_max_freq <m> to only consider k-mers that occur in at least n reads and at most m reads (across the dataset). By default, solid_min_freq=1 and solid_max_freq=100000 (effectively no filtering)  
-GitHub  
 For large datasets, increasing solid_min_freq to 2 (for example) filters out k-mers that occur in only one read (which are often error k-mers) and can greatly reduce false candidate overlaps at a negligible risk of missing true overlaps. Similarly, lowering solid_max_freq can remove overly common k-mers (e.g., from repetitive regions) that would cause many spurious matches. Use this feature with caution, as it may drop overlaps that rely on those k-mers if set too strictly.
 
 **Fingerprint Variants (CFL/ICFL):** By default, FLoRe uses a CFL (Canonical Lyndon factor) compression in the fingerprint stage, an advanced technique that can further compress fingerprint sequences by leveraging Lyndon factorization of reads (a string decomposition approach). The tool offers experimental flags to control this:
