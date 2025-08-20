@@ -88,11 +88,7 @@ make
 ```
 
 This will produce an executable binary named FLORE_bin in the project directory. The Makefile uses g++ with -std=c++17 -O3 optimizations enabled  
-GitHub  
 All source files (for fingerprinting, indexing, overlap algorithms, etc.) will be compiled and linked into FLORE_bin. If the build succeeds, the make process will also set the execute permission on the binary automatically  
-GitHub  
-GitHub  
-
 **(Optional) Install:** You can copy the FLORE_bin binary and the FLORE runner script to a directory in your $PATH for system-wide use. However, this is not required; you can also run it from the build directory.
 
 No special installation steps are needed beyond compilation. The repository includes all necessary source code. Ensure your system has enough memory for the dataset you plan to analyze (long-read overlap detection can be memory-intensive for large genomes). For example, overlapping a few thousand long reads (length 10kbp+) may require a few GB of RAM.
