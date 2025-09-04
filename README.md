@@ -2,7 +2,7 @@
 
 FLoRe is an open-source tool for fast and accurate detection of overlaps between long DNA sequencing reads (common in third-generation sequencing data). It introduces a novel fingerprinting approach to efficiently identify candidate overlapping reads, followed by multiple verification strategies to confirm true overlaps even in the presence of high error rates. FLoRe encodes each k-mer (substring of length k) as a unique integer (bijective k-mer encoding) and compresses these fingerprints via run-length encoding to eliminate local redundancies. A compact inverted index then maps each fingerprint value to the list of reads containing it, enabling rapid pre-filtering of promising read pairs. For overlap validation, FLoRe employs a hierarchy of seed-and-extend algorithms – FGOE, AOE, PSH, and CORE – with a suffix-automaton-based fallback to ensure high accuracy and robustness against sequencing errors. The tool is implemented in modern C++ with multi-threading support and includes an integrated profiler to measure execution time and peak memory usage.
 
-## Key Features and Algorithms
+<details> <summary><strong>Key Features and Algorithms</strong></summary>
 
 ### Bijective k-mer Fingerprinting
 Each DNA k-mer is encoded into a unique integer ID (using a 2-bit per base representation), ensuring collision-free fingerprints and preserving lexicographic order. This provides an efficient numerical representation of reads for quick comparison.
@@ -33,7 +33,7 @@ If all the above methods fail to confirm an overlap, a suffix automaton fallback
 
 **Performance and Profiling:** The C++ implementation is optimized with multithreading (overlap computations are done in parallel). FLoRe logs execution time and peak memory usage for each run, helping users evaluate performance on different datasets. It has been shown to outperform baseline tools in speed while maintaining or improving overlap detection accuracy (see Performance below).
 
-## Workflow Overview
+</details> <details> <summary><strong>Workflow Overview</strong></summary>
 
 The FLoRe pipeline consists of four main stages:
 
@@ -58,6 +58,7 @@ After these methods, if an overlap is confirmed by any of them, FLoRe records it
 
 ### Output and Post-processing
 Each verified overlap is then output in a structured format (see Usage below). FLoRe records the read identifiers, overlap positions, length, and other details for each overlap found. It also notes which algorithm confirmed the overlap (e.g., FGOE, AOE, PSH, CORE, or suffix automaton) as part of the result metadata. This is useful for debugging or analyzing which overlaps required the heavier fallback approach. The tool’s built-in profiling module also logs the execution time and peak memory used for the run, providing insight into performance. Optionally, the JSON results can be converted to a human-friendly Excel spreadsheet automatically if Python is available (this is handled by the provided wrapper script). After this stage, the set of overlaps can be used in downstream applications (such as assembly graph construction or error correction).
+</details>
 
 ## Installation and Requirements
 
@@ -176,7 +177,7 @@ This JSON format is both human-readable and easy to parse with scripts. It can b
 
 Example: After running FLoRe on a test FASTA, you might get an output JSON indicating overlaps like read1 overlaps read5 by 500bp, read2 overlaps read7 by 1200bp, etc. You can then use those overlaps in a genome assembly pipeline (overlaps are the input to string graph assemblers), or simply analyze how many overlaps each read has (coverage) and so on.
 
-## Performance
+</details> <details> <summary><strong>Performance</strong></summary>
 
 FLoRe was designed to be efficient in both runtime and memory, taking advantage of algorithmic pruning and parallelism. It has been benchmarked against a baseline overlap detection method (referred to as LROD in the thesis) and shows significant improvements. For instance, on a test of 100 long reads, FLoRe completed in 0.58 seconds, about 2.6× faster than the baseline (which took 1.52 s), and it correctly detected 8 true overlaps whereas the baseline found only 7. This indicates FLoRe not only runs faster but also achieved higher sensitivity in that case.
 
