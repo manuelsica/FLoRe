@@ -11,3 +11,6 @@ util.o
 *.o
 *.o
 *.tmp
+resume_cfl.txt
+resume_cfl_icfl.txt
+resume_classic.txt
